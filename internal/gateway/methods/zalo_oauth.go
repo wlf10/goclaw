@@ -117,6 +117,7 @@ func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gatew
 		InstanceID string `json:"instance_id"`
 		Code       string `json:"code"`
 		State      string `json:"state"`
+		OAID       string `json:"oa_id"` // optional — from the callback URL query string
 	}
 	if req.Params != nil {
 		_ = json.Unmarshal(req.Params, &params)
@@ -159,6 +160,13 @@ func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gatew
 		return
 	}
 	creds.WithTokens(tok)
+	// Zalo's OAuth token endpoint does NOT return oa_id; it rides in the
+	// callback URL query string alongside `code`. Persist it here so the
+	// reloaded Channel's Start() sees a non-empty OAID and marks Healthy
+	// (otherwise it stays Degraded "awaiting consent" forever).
+	if params.OAID != "" {
+		creds.OAID = params.OAID
+	}
 	credsBytes, err := creds.Marshal()
 	if err != nil {
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgZaloOAuthCodeExchangeFailed, err.Error())))

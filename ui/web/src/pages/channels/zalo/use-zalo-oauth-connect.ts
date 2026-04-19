@@ -4,30 +4,34 @@ import { useWsCall } from "@/hooks/use-ws-call";
 /**
  * extractCode normalizes the paste-code input. Operators can paste either
  * the raw `code` value or the full callback URL Zalo redirected them to
- * (e.g. `https://your-app.com/zalo-callback?code=iYP...&state=db8...`).
+ * (e.g. `https://your-app.com/zalo-callback?oa_id=42...&code=iYP...&state=db8...`).
  * URL parsing runs first — if it looks like an http(s) URL with a `code`
  * query param we pull that out; otherwise we trust the raw value.
  *
- * When the pasted URL also carries a `state` query, we opportunistically
- * compare it to the one we stashed from consent_url. Mismatches are
- * reported back so the UI can hint; the server is the authoritative
- * validator so we don't fail the submit here.
+ * When the pasted URL carries a `state` query, we opportunistically compare
+ * it to the one we stashed from consent_url (mismatch reported; server is
+ * authoritative). When it carries an `oa_id`, we return that so the exchange
+ * call can persist it on the channel — without oa_id the channel stays in
+ * "awaiting consent" state even after a successful exchange because there's
+ * no separate Zalo endpoint to recover it.
  */
-export function extractCode(input: string, stashedState: string): { code: string; mismatchedState: boolean } {
+export function extractCode(input: string, stashedState: string): { code: string; oaID: string; mismatchedState: boolean } {
   const trimmed = input.trim();
   if (!/^https?:\/\//i.test(trimmed)) {
-    return { code: trimmed, mismatchedState: false };
+    return { code: trimmed, oaID: "", mismatchedState: false };
   }
   try {
     const u = new URL(trimmed);
     const code = u.searchParams.get("code") ?? trimmed;
     const state = u.searchParams.get("state") ?? "";
+    const oaID = u.searchParams.get("oa_id") ?? "";
     return {
       code,
+      oaID,
       mismatchedState: state !== "" && stashedState !== "" && state !== stashedState,
     };
   } catch {
-    return { code: trimmed, mismatchedState: false };
+    return { code: trimmed, oaID: "", mismatchedState: false };
   }
 }
 
@@ -137,18 +141,22 @@ export function useZaloOAuthConnect(
 
   async function handleSubmit() {
     if (!code.trim() || !state) return;
-    const { code: finalCode, mismatchedState } = extractCode(code.trim(), state);
+    const { code: finalCode, oaID, mismatchedState } = extractCode(code.trim(), state);
     if (mismatchedState) {
       // Ignore — server still validates state. Surfacing as an explicit
       // error would confuse operators on legit flows where Zalo mangles the
       // redirect but still returns a valid code.
     }
     try {
-      const resp = await exchange.call({
+      const params: Record<string, unknown> = {
         instance_id: instanceId,
         code: finalCode,
         state,
-      });
+      };
+      if (oaID !== "") {
+        params.oa_id = oaID;
+      }
+      const resp = await exchange.call(params);
       if (resp?.ok) setDone(true);
     } catch {
       // error captured on exchange.error

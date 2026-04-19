@@ -7,6 +7,7 @@ describe("extractCode", () => {
   it("returns raw code when input is not a URL", () => {
     const got = extractCode("iYPhiMZy16swCN-NG", stashedState);
     expect(got.code).toBe("iYPhiMZy16swCN-NG");
+    expect(got.oaID).toBe("");
     expect(got.mismatchedState).toBe(false);
   });
 
@@ -15,10 +16,11 @@ describe("extractCode", () => {
     expect(got.code).toBe("iYPhiMZy");
   });
 
-  it("extracts code from a real-shape Zalo callback URL", () => {
+  it("extracts code AND oa_id from a real-shape Zalo callback URL", () => {
     const url = `https://dataplanelabs.com/zalo-callback?oa_id=4245484535895825355&code=iYPhiMZy16swCN-NGUqQVi4lOfXFoX&state=${stashedState}`;
     const got = extractCode(url, stashedState);
     expect(got.code).toBe("iYPhiMZy16swCN-NGUqQVi4lOfXFoX");
+    expect(got.oaID).toBe("4245484535895825355");
     expect(got.mismatchedState).toBe(false);
   });
 
