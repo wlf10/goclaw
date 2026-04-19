@@ -28,7 +28,12 @@ var ErrPartialSend = errors.New("zalo_oauth: attachment delivered but trailing t
 const (
 	defaultClientTimeout        = 15 * time.Second
 	defaultSafetyTickerInterval = 30 * time.Minute
-	defaultMediaMaxMB           = 10 // matches plan §Non-functional; under Zalo's ~25MB undocumented ceiling
+	// Zalo OA's image upload endpoint enforces a hard 1MB cap (error -210
+	// "file is invalid. The file must be smaller than or equal 1MB").
+	// AI-generated PNGs routinely exceed this, so we default to the real
+	// cap and reject BEFORE burning an upload call. Operators who know
+	// what they're doing can override via config.MediaMaxMB.
+	defaultMediaMaxMB = 1
 )
 
 // Channel is the phase-02 form. Phase 03 wires Send; phase 04 wires polling.
@@ -237,7 +242,7 @@ func (c *Channel) readMedia(m bus.MediaAttachment, maxBytes int64) ([]byte, stri
 	if maxBytes > 0 {
 		info, statErr := os.Stat(m.URL)
 		if statErr == nil && info.Size() > maxBytes {
-			return nil, "", fmt.Errorf("zalo_oauth: media too large: %d bytes (limit %d)", info.Size(), maxBytes)
+			return nil, "", fmt.Errorf("zalo_oauth: media too large: %d bytes (local cap %d; Zalo OA hard-caps uploads at 1MB via error -210)", info.Size(), maxBytes)
 		}
 	}
 	data, err := os.ReadFile(m.URL)
