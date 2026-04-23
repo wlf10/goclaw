@@ -36,7 +36,7 @@ func compressForZaloImage(data []byte, originalMIME string, maxBytes int) ([]byt
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", fmt.Errorf("zalo_oauth: decode image for compression: %w", err)
+		return nil, "", fmt.Errorf("zalo_oa: decode image for compression: %w", err)
 	}
 	bounds := img.Bounds()
 	origW, origH := bounds.Dx(), bounds.Dy()
@@ -49,10 +49,10 @@ func compressForZaloImage(data []byte, originalMIME string, maxBytes int) ([]byt
 		for _, q := range jpegQualityLadder {
 			var buf bytes.Buffer
 			if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: q}); err != nil {
-				return nil, "", fmt.Errorf("zalo_oauth: jpeg encode (side=%d q=%d): %w", side, q, err)
+				return nil, "", fmt.Errorf("zalo_oa: jpeg encode (side=%d q=%d): %w", side, q, err)
 			}
 			if buf.Len() <= maxBytes {
-				slog.Info("zalo_oauth.image.compressed",
+				slog.Info("zalo_oa.image.compressed",
 					"orig_bytes", len(data), "orig_mime", originalMIME,
 					"new_bytes", buf.Len(), "side", side, "quality", q)
 				return buf.Bytes(), "image/jpeg", nil
@@ -60,6 +60,6 @@ func compressForZaloImage(data []byte, originalMIME string, maxBytes int) ([]byt
 		}
 		// If even lowest quality at this side is still too big, shrink further.
 	}
-	return nil, "", fmt.Errorf("zalo_oauth: image cannot fit under %d bytes (%dx%d original %d bytes)",
+	return nil, "", fmt.Errorf("zalo_oa: image cannot fit under %d bytes (%dx%d original %d bytes)",
 		maxBytes, origW, origH, len(data))
 }

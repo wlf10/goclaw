@@ -34,7 +34,7 @@ func (c *Channel) runPollLoop(parentCtx context.Context) {
 		case <-flush.C:
 			if c.cursor.IsDirty() {
 				if err := c.flushCursor(pollCtx); err != nil {
-					slog.Warn("zalo_oauth.poll.cursor_flush_failed", "error", err)
+					slog.Warn("zalo_oa.poll.cursor_flush_failed", "error", err)
 				}
 			}
 		case <-t.C:
@@ -52,7 +52,7 @@ func (c *Channel) runPollLoop(parentCtx context.Context) {
 					rateLimited = true
 				}
 			case err != nil:
-				slog.Warn("zalo_oauth.poll_failed", "oa_id", c.creds.OAID, "error", err)
+				slog.Warn("zalo_oa.poll_failed", "oa_id", c.creds.OAID, "error", err)
 				// Auth-class errors that survive the in-pollOnce retry-
 				// once-on-auth mean the operator must re-consent. Flip
 				// health so the dashboard surfaces the red re-auth prompt
@@ -74,7 +74,7 @@ func (c *Channel) runPollLoop(parentCtx context.Context) {
 // any operator-set fields.
 func (c *Channel) flushCursor(ctx context.Context) error {
 	if c.ciStore == nil || c.instanceID == [16]byte{} {
-		return errors.New("zalo_oauth: cursor flush without store/instance ID")
+		return errors.New("zalo_oa: cursor flush without store/instance ID")
 	}
 	inst, err := c.ciStore.Get(ctx, c.instanceID)
 	if err != nil {
@@ -106,6 +106,6 @@ func (c *Channel) flushCursorOnExit(parentCtx context.Context) {
 	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
 	defer cancel()
 	if err := c.flushCursor(ctx); err != nil {
-		slog.Warn("zalo_oauth.poll.cursor_flush_on_exit_failed", "error", err)
+		slog.Warn("zalo_oa.poll.cursor_flush_on_exit_failed", "error", err)
 	}
 }

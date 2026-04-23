@@ -27,7 +27,7 @@ func isZaloSupportedFileMIME(mime string) bool {
 func (c *Channel) SendText(ctx context.Context, userID, text string) (string, error) {
 	mid, err := c.post(ctx, pathSendMessage, buildTextBody(userID, text))
 	if err == nil {
-		slog.Info("zalo_oauth.sent", "type", "text", "message_id", mid, "oa_id", c.creds.OAID)
+		slog.Info("zalo_oa.sent", "type", "text", "message_id", mid, "oa_id", c.creds.OAID)
 	}
 	return mid, err
 }
@@ -47,7 +47,7 @@ func (c *Channel) SendImage(ctx context.Context, userID string, data []byte, mim
 	body := buildMediaAttachmentBody(userID, "image", tok)
 	mid, err := c.post(ctx, pathSendMessage, body)
 	if err == nil {
-		slog.Info("zalo_oauth.sent", "type", "image", "message_id", mid, "oa_id", c.creds.OAID)
+		slog.Info("zalo_oa.sent", "type", "image", "message_id", mid, "oa_id", c.creds.OAID)
 	}
 	return mid, err
 }
@@ -57,7 +57,7 @@ func (c *Channel) SendImage(ctx context.Context, userID string, data []byte, mim
 // Zalo caps /upload/gif at 5MB (callers should enforce before calling).
 func (c *Channel) SendGIF(ctx context.Context, userID string, data []byte) (string, error) {
 	if len(data) == 0 {
-		return "", errors.New("zalo_oauth: refusing to send empty gif")
+		return "", errors.New("zalo_oa: refusing to send empty gif")
 	}
 	tok, err := c.uploadGIF(ctx, data)
 	if err != nil {
@@ -67,7 +67,7 @@ func (c *Channel) SendGIF(ctx context.Context, userID string, data []byte) (stri
 	body := buildMediaAttachmentBody(userID, "gif", tok)
 	mid, err := c.post(ctx, pathSendMessage, body)
 	if err == nil {
-		slog.Info("zalo_oauth.sent", "type", "gif", "message_id", mid, "oa_id", c.creds.OAID)
+		slog.Info("zalo_oa.sent", "type", "gif", "message_id", mid, "oa_id", c.creds.OAID)
 	}
 	return mid, err
 }
@@ -131,7 +131,7 @@ func buildFileAttachmentBody(userID, attachmentID string) map[string]any {
 // reach SendFile, the payload is known to be a supported type.
 func (c *Channel) SendFile(ctx context.Context, userID string, data []byte, filename string) (string, error) {
 	if len(data) == 0 {
-		return "", fmt.Errorf("zalo_oauth: refusing to send empty/zero-byte file %q", filename)
+		return "", fmt.Errorf("zalo_oa: refusing to send empty/zero-byte file %q", filename)
 	}
 	tok, err := c.uploadFile(ctx, data, filename)
 	if err != nil {
@@ -139,7 +139,7 @@ func (c *Channel) SendFile(ctx context.Context, userID string, data []byte, file
 	}
 	mid, err := c.post(ctx, pathSendMessage, buildFileAttachmentBody(userID, tok))
 	if err == nil {
-		slog.Info("zalo_oauth.sent", "type", "file", "message_id", mid, "oa_id", c.creds.OAID)
+		slog.Info("zalo_oa.sent", "type", "file", "message_id", mid, "oa_id", c.creds.OAID)
 	}
 	return mid, err
 }
@@ -170,7 +170,7 @@ func (c *Channel) post(ctx context.Context, path string, body any) (string, erro
 	}
 	// Unreachable — second iteration always returns. Defensive panic so a
 	// future refactor that violates the loop invariant fails loudly.
-	panic("zalo_oauth.post: loop exited without returning (broken invariant)")
+	panic("zalo_oa.post: loop exited without returning (broken invariant)")
 }
 
 // parseMessageResponse extracts message_id from the standard envelope:
@@ -182,7 +182,7 @@ func parseMessageResponse(raw json.RawMessage) (string, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", fmt.Errorf("zalo_oauth: decode message response: %w", err)
+		return "", fmt.Errorf("zalo_oa: decode message response: %w", err)
 	}
 	return env.Data.MessageID, nil
 }

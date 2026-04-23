@@ -96,7 +96,7 @@ func parseUploadAttachmentID(raw json.RawMessage) (string, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", fmt.Errorf("zalo_oauth: decode upload response: %w", err)
+		return "", fmt.Errorf("zalo_oa: decode upload response: %w", err)
 	}
 	id := env.Data.AttachmentID
 	if id == "" {
@@ -107,7 +107,7 @@ func parseUploadAttachmentID(raw json.RawMessage) (string, error) {
 		if len(preview) > 500 {
 			preview = preview[:500] + "…(truncated)"
 		}
-		return "", fmt.Errorf("zalo_oauth: upload response missing data.attachment_id (raw=%s)", preview)
+		return "", fmt.Errorf("zalo_oa: upload response missing data.attachment_id (raw=%s)", preview)
 	}
 	return id, nil
 }

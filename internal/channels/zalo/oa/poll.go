@@ -47,7 +47,7 @@ func (c *Channel) listRecentChat(ctx context.Context, offset, count int) ([]mess
 	}
 	data, err := json.Marshal(map[string]int{"offset": offset, "count": count})
 	if err != nil {
-		return nil, fmt.Errorf("zalo_oauth: marshal listrecentchat params: %w", err)
+		return nil, fmt.Errorf("zalo_oa: marshal listrecentchat params: %w", err)
 	}
 	q := url.Values{"data": {string(data)}}
 	raw, err := c.client.apiGet(ctx, pathListRecentChat, q, tok)
@@ -58,7 +58,7 @@ func (c *Channel) listRecentChat(ctx context.Context, offset, count int) ([]mess
 		Data []message `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return nil, fmt.Errorf("zalo_oauth: decode listrecentchat: %w", err)
+		return nil, fmt.Errorf("zalo_oa: decode listrecentchat: %w", err)
 	}
 	return wrap.Data, nil
 }
@@ -86,7 +86,7 @@ func (c *Channel) pollOnce(ctx context.Context) error {
 	if err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.isAuth() {
-			slog.Warn("zalo_oauth.poll.token_rejected_forcing_refresh",
+			slog.Warn("zalo_oa.poll.token_rejected_forcing_refresh",
 				"oa_id", c.creds.OAID, "zalo_code", apiErr.Code, "zalo_msg", apiErr.Message)
 			c.tokens.ForceRefresh()
 			msgs, err = c.listRecentChat(ctx, 0, listRecentChatCount)
@@ -123,7 +123,7 @@ func (c *Channel) pollOnce(ctx context.Context) error {
 // emits text only — non-text payloads are logged and skipped.
 func (c *Channel) dispatchInbound(m message) {
 	if m.Type != "" && m.Type != "text" {
-		slog.Info("zalo_oauth.poll.non_text_skipped",
+		slog.Info("zalo_oa.poll.non_text_skipped",
 			"oa_id", c.creds.OAID, "user_id", m.FromID, "message_id", m.MessageID, "type", m.Type)
 		return
 	}
@@ -132,7 +132,7 @@ func (c *Channel) dispatchInbound(m message) {
 	}
 	metadata := map[string]string{
 		"message_id": m.MessageID,
-		"platform":   "zalo_oauth",
+		"platform":   "zalo_oa",
 	}
 	if m.FromDisplayName != "" {
 		metadata["sender_display_name"] = m.FromDisplayName

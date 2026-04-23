@@ -77,10 +77,10 @@ func (ts *tokenSource) doRefresh(ctx context.Context) error {
 	if rawErr != nil {
 		err := classifyRefreshError(rawErr)
 		if errors.Is(err, ErrAuthExpired) {
-			slog.Warn("zalo_oauth.reauth_required", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID)
+			slog.Warn("zalo_oa.reauth_required", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID)
 			return err
 		}
-		slog.Warn("zalo_oauth.refresh_failed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "error", err)
+		slog.Warn("zalo_oa.refresh_failed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "error", err)
 		return err
 	}
 
@@ -88,13 +88,13 @@ func (ts *tokenSource) doRefresh(ctx context.Context) error {
 	snapshot := *ts.creds
 	snapshot.WithTokens(tok)
 	if err := Persist(ctx, ts.store, ts.instanceID, &snapshot); err != nil {
-		slog.Error("zalo_oauth.persist_failed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "error", err)
+		slog.Error("zalo_oa.persist_failed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "error", err)
 		// Commit to memory anyway: the burned refresh token is the only one
 		// we have; the new pair must remain usable until process restart.
 		*ts.creds = snapshot
 		return err
 	}
 	*ts.creds = snapshot
-	slog.Info("zalo_oauth.token_refreshed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "new_expires_at", ts.creds.ExpiresAt)
+	slog.Info("zalo_oa.token_refreshed", "instance_id", ts.instanceID, "oa_id", ts.creds.OAID, "new_expires_at", ts.creds.ExpiresAt)
 	return nil
 }

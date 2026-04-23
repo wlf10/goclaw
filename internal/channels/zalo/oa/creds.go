@@ -65,14 +65,14 @@ func (c *ChannelCreds) WithTokens(tok *Tokens) {
 // function does NO field-level encryption.
 func Persist(ctx context.Context, s store.ChannelInstanceStore, id uuid.UUID, c *ChannelCreds) error {
 	if s == nil {
-		return fmt.Errorf("zalo_oauth: nil ChannelInstanceStore in Persist")
+		return fmt.Errorf("zalo_oa: nil ChannelInstanceStore in Persist")
 	}
 	if id == uuid.Nil {
-		return fmt.Errorf("zalo_oauth: nil instance ID in Persist")
+		return fmt.Errorf("zalo_oa: nil instance ID in Persist")
 	}
 	blob, err := c.Marshal()
 	if err != nil {
-		return fmt.Errorf("zalo_oauth: marshal creds: %w", err)
+		return fmt.Errorf("zalo_oa: marshal creds: %w", err)
 	}
 	return s.Update(ctx, id, map[string]any{"credentials": []byte(blob)})
 }

@@ -23,7 +23,7 @@ import (
 // ErrPartialSend signals that an attachment was delivered but the trailing
 // caption/text message failed. The attachment-side message_id is logged
 // alongside the warning; callers may use errors.Is to special-case retry.
-var ErrPartialSend = errors.New("zalo_oauth: attachment delivered but trailing text failed")
+var ErrPartialSend = errors.New("zalo_oa: attachment delivered but trailing text failed")
 
 const (
 	defaultClientTimeout        = 15 * time.Second
@@ -41,7 +41,7 @@ type Channel struct {
 	client  *Client
 	creds   *ChannelCreds
 	ciStore store.ChannelInstanceStore
-	cfg     config.ZaloOAuthConfig
+	cfg     config.ZaloOAConfig
 
 	// instanceID is injected by InstanceLoader via SetInstanceID after construction
 	// (ChannelFactory signature doesn't expose it).
@@ -64,14 +64,14 @@ type Channel struct {
 }
 
 // New constructs the channel. InstanceLoader calls SetInstanceID after this.
-func New(name string, cfg config.ZaloOAuthConfig, creds *ChannelCreds,
+func New(name string, cfg config.ZaloOAConfig, creds *ChannelCreds,
 	ciStore store.ChannelInstanceStore, msgBus *bus.MessageBus, _ store.PairingStore) (*Channel, error) {
 
 	if creds == nil {
-		return nil, errors.New("zalo_oauth: nil creds")
+		return nil, errors.New("zalo_oa: nil creds")
 	}
 	if creds.AppID == "" || creds.SecretKey == "" {
-		return nil, errors.New("zalo_oauth: app_id and secret_key are required")
+		return nil, errors.New("zalo_oa: app_id and secret_key are required")
 	}
 
 	c := &Channel{
@@ -126,10 +126,10 @@ func (c *Channel) Type() string { return channels.TypeZaloOA }
 func (c *Channel) Start(_ context.Context) error {
 	c.SetRunning(true)
 	if c.creds.OAID != "" {
-		slog.Info("zalo_oauth.started", "state", "connected", "oa_id", c.creds.OAID, "name", c.Name())
+		slog.Info("zalo_oa.started", "state", "connected", "oa_id", c.creds.OAID, "name", c.Name())
 		c.MarkHealthy("connected")
 	} else {
-		slog.Info("zalo_oauth.started", "state", "unauthorized", "name", c.Name())
+		slog.Info("zalo_oa.started", "state", "unauthorized", "name", c.Name())
 		c.MarkDegraded("awaiting consent", "no oa_id yet — paste consent code to authorize",
 			channels.ChannelFailureKindAuth, true)
 	}
@@ -152,7 +152,7 @@ func (c *Channel) Stop(_ context.Context) error {
 	c.tickerWG.Wait()
 	c.pollWG.Wait()
 	c.SetRunning(false)
-	slog.Info("zalo_oauth.stopped", "name", c.Name())
+	slog.Info("zalo_oa.stopped", "name", c.Name())
 	return nil
 }
 
@@ -167,7 +167,7 @@ func (c *Channel) Stop(_ context.Context) error {
 // callers can distinguish from a full failure.
 func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	if msg.ChatID == "" {
-		return errors.New("zalo_oauth: empty user_id")
+		return errors.New("zalo_oa: empty user_id")
 	}
 
 	if len(msg.Media) == 0 {
@@ -175,7 +175,7 @@ func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 		return err
 	}
 	if len(msg.Media) > 1 {
-		slog.Info("zalo_oauth.send.extra_media_skipped",
+		slog.Info("zalo_oa.send.extra_media_skipped",
 			"oa_id", c.creds.OAID, "extra", len(msg.Media)-1)
 	}
 
@@ -194,7 +194,7 @@ func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 		// preserves animation. Don't re-encode GIFs as JPEG.
 		const zaloGIFCapBytes = 5 * 1024 * 1024
 		if len(data) > zaloGIFCapBytes {
-			return fmt.Errorf("zalo_oauth: gif too large: %d bytes (Zalo cap is 5MB)", len(data))
+			return fmt.Errorf("zalo_oa: gif too large: %d bytes (Zalo cap is 5MB)", len(data))
 		}
 		attachMID, err = c.SendGIF(ctx, msg.ChatID, data)
 	} else if strings.HasPrefix(mt, "image/") {
@@ -211,10 +211,10 @@ func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 		// Zalo upload/file only accepts PDF/DOC/DOCX up to 5MB.
 		const zaloFileCapBytes = 5 * 1024 * 1024
 		if !isZaloSupportedFileMIME(mt) {
-			return fmt.Errorf("zalo_oauth: file MIME %q not supported (Zalo accepts PDF, DOC, DOCX only)", mt)
+			return fmt.Errorf("zalo_oa: file MIME %q not supported (Zalo accepts PDF, DOC, DOCX only)", mt)
 		}
 		if len(data) > zaloFileCapBytes {
-			return fmt.Errorf("zalo_oauth: file too large: %d bytes (Zalo cap is 5MB)", len(data))
+			return fmt.Errorf("zalo_oa: file too large: %d bytes (Zalo cap is 5MB)", len(data))
 		}
 		attachMID, err = c.SendFile(ctx, msg.ChatID, data, filepath.Base(m.URL))
 	}
@@ -227,7 +227,7 @@ func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 		return nil
 	}
 	if _, terr := c.SendText(ctx, msg.ChatID, trailing); terr != nil {
-		slog.Error("zalo_oauth.send.text_after_attachment_failed",
+		slog.Error("zalo_oa.send.text_after_attachment_failed",
 			"oa_id", c.creds.OAID, "user_id", msg.ChatID,
 			"attachment_message_id", attachMID, "error", terr)
 		return fmt.Errorf("%w: %v", ErrPartialSend, terr)
@@ -258,17 +258,17 @@ func mergeTrailingText(caption, content string) string {
 // path from OOMing the process before the size guard rejects it.
 func (c *Channel) readMedia(m bus.MediaAttachment, maxBytes int64) ([]byte, string, error) {
 	if m.URL == "" {
-		return nil, "", errors.New("zalo_oauth: media URL empty")
+		return nil, "", errors.New("zalo_oa: media URL empty")
 	}
 	if maxBytes > 0 {
 		info, statErr := os.Stat(m.URL)
 		if statErr == nil && info.Size() > maxBytes {
-			return nil, "", fmt.Errorf("zalo_oauth: media too large: %d bytes (local cap %d; Zalo OA hard-caps uploads at 1MB via error -210)", info.Size(), maxBytes)
+			return nil, "", fmt.Errorf("zalo_oa: media too large: %d bytes (local cap %d; Zalo OA hard-caps uploads at 1MB via error -210)", info.Size(), maxBytes)
 		}
 	}
 	data, err := os.ReadFile(m.URL)
 	if err != nil {
-		return nil, "", fmt.Errorf("zalo_oauth: read media %s: %w", m.URL, err)
+		return nil, "", fmt.Errorf("zalo_oa: read media %s: %w", m.URL, err)
 	}
 	mt := m.ContentType
 	if mt == "" {
@@ -303,7 +303,7 @@ func (c *Channel) runSafetyTicker() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			if _, err := c.tokens.Access(ctx); err != nil && !errors.Is(err, ErrNotAuthorized) {
 				c.markAuthFailedIfNeeded(err)
-				slog.Warn("zalo_oauth.safety_tick_refresh_failed", "instance_id", c.instanceID, "error", err)
+				slog.Warn("zalo_oa.safety_tick_refresh_failed", "instance_id", c.instanceID, "error", err)
 			}
 			cancel()
 		}

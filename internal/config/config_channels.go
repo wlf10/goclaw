@@ -18,7 +18,7 @@ type ChannelsConfig struct {
 	Slack             SlackConfig              `json:"slack"`
 	WhatsApp          WhatsAppConfig           `json:"whatsapp"`
 	Zalo              ZaloConfig               `json:"zalo"`
-	ZaloOAuth         ZaloOAuthConfig          `json:"zalo_oauth"`
+	ZaloOA            ZaloOAConfig             `json:"zalo_oa"`
 	ZaloPersonal      ZaloPersonalConfig       `json:"zalo_personal"`
 	Feishu            FeishuConfig             `json:"feishu"`
 	PendingCompaction *PendingCompactionConfig `json:"pending_compaction,omitempty"` // global pending message compaction settings
@@ -154,10 +154,10 @@ type ZaloConfig struct {
 	BlockReply    *bool               `json:"block_reply,omitempty"`  // override gateway block_reply (nil = inherit)
 }
 
-// ZaloOAuthConfig configures the phone-number-tied Official Account
+// ZaloOAConfig configures the phone-number-tied Official Account
 // channel that uses Zalo OAuth v4 (oauth.zaloapp.com). Distinct from
 // ZaloConfig (static-token Bot OA) and ZaloPersonalConfig (QR personal).
-type ZaloOAuthConfig struct {
+type ZaloOAConfig struct {
 	Enabled              bool                `json:"enabled"`
 	AppID                string              `json:"app_id"`
 	SecretKey            string              `json:"secret_key"` // env-overridable; never log

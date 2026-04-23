@@ -22,46 +22,46 @@ import (
 )
 
 const (
-	zaloOAuthStateTTL = 10 * time.Minute
-	// zaloOAuthDefaultRedirectURI is used only when the instance's creds
+	zaloOAStateTTL = 10 * time.Minute
+	// zaloOADefaultRedirectURI is used only when the instance's creds
 	// don't carry one. Zalo enforces redirect_uri match against the
 	// dev-console-registered callback (error_code=-14003), so this
 	// placeholder is never going to work in practice — operators MUST
 	// set creds.redirect_uri to their registered callback.
-	zaloOAuthDefaultRedirectURI = "https://oa.local/zalo_oauth_callback"
+	zaloOADefaultRedirectURI = "https://oa.local/zalo_oa_callback"
 )
 
-// ZaloOAuthMethods serves the WS handlers backing the paste-code consent flow.
-type ZaloOAuthMethods struct {
+// ZaloOAMethods serves the WS handlers backing the paste-code consent flow.
+type ZaloOAMethods struct {
 	store  store.ChannelInstanceStore
 	msgBus *bus.MessageBus
 
 	stateMu sync.Mutex
-	states  map[string]zaloOAuthStateEntry // key: instanceID|state
+	states  map[string]zaloOAStateEntry // key: instanceID|state
 }
 
-type zaloOAuthStateEntry struct {
+type zaloOAStateEntry struct {
 	expiresAt time.Time
 }
 
-// NewZaloOAuthMethods constructs the handler. msgBus may be nil during tests.
-func NewZaloOAuthMethods(s store.ChannelInstanceStore, msgBus *bus.MessageBus) *ZaloOAuthMethods {
-	return &ZaloOAuthMethods{
+// NewZaloOAMethods constructs the handler. msgBus may be nil during tests.
+func NewZaloOAMethods(s store.ChannelInstanceStore, msgBus *bus.MessageBus) *ZaloOAMethods {
+	return &ZaloOAMethods{
 		store:  s,
 		msgBus: msgBus,
-		states: make(map[string]zaloOAuthStateEntry),
+		states: make(map[string]zaloOAStateEntry),
 	}
 }
 
 // Register wires the methods into the WS router.
-func (m *ZaloOAuthMethods) Register(router *gateway.MethodRouter) {
+func (m *ZaloOAMethods) Register(router *gateway.MethodRouter) {
 	router.Register(protocol.MethodChannelInstancesZaloOAConsentURL, m.handleConsentURL)
 	router.Register(protocol.MethodChannelInstancesZaloOAExchangeCode, m.handleExchangeCode)
 }
 
 // handleConsentURL builds the Zalo authorization URL server-side so the
 // frontend never receives app_id (which is masked in maskInstance anyway).
-func (m *ZaloOAuthMethods) handleConsentURL(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
+func (m *ZaloOAMethods) handleConsentURL(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
 	locale := store.LocaleFromContext(ctx)
 	var params struct {
 		InstanceID string `json:"instance_id"`
@@ -87,20 +87,20 @@ func (m *ZaloOAuthMethods) handleConsentURL(ctx context.Context, client *gateway
 
 	creds, err := zalooa.LoadCreds(inst.Credentials)
 	if err != nil || creds.AppID == "" {
-		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, "zalo_oauth: missing app_id in credentials"))
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, "zalo_oa: missing app_id in credentials"))
 		return
 	}
 
 	state, err := newStateToken()
 	if err != nil {
-		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, "zalo_oauth: state token gen failed"))
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, "zalo_oa: state token gen failed"))
 		return
 	}
 	m.putState(instID, state)
 
 	redirectURI := creds.RedirectURI
 	if redirectURI == "" {
-		redirectURI = zaloOAuthDefaultRedirectURI
+		redirectURI = zaloOADefaultRedirectURI
 	}
 	url := zalooa.ConsentURL(creds.AppID, redirectURI, state)
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{
@@ -111,7 +111,7 @@ func (m *ZaloOAuthMethods) handleConsentURL(ctx context.Context, client *gateway
 
 // handleExchangeCode swaps the pasted authorization code for tokens and
 // persists them via the store-encrypted credentials blob.
-func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
+func (m *ZaloOAMethods) handleExchangeCode(ctx context.Context, client *gateway.Client, req *protocol.RequestFrame) {
 	locale := store.LocaleFromContext(ctx)
 	var params struct {
 		InstanceID string `json:"instance_id"`
@@ -155,7 +155,7 @@ func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gatew
 	httpClient := zalooa.NewClient(15 * time.Second)
 	tok, err := httpClient.ExchangeCode(ctx, creds.AppID, creds.SecretKey, params.Code)
 	if err != nil {
-		slog.Warn("zalo_oauth.exchange_failed", "instance_id", instID, "oa_id", creds.OAID, "error", err)
+		slog.Warn("zalo_oa.exchange_failed", "instance_id", instID, "oa_id", creds.OAID, "error", err)
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, i18n.T(locale, i18n.MsgZaloOACodeExchangeFailed, err.Error())))
 		return
 	}
@@ -178,7 +178,7 @@ func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gatew
 	}
 	m.emitCacheInvalidate()
 
-	slog.Info("zalo_oauth.connected", "instance_id", instID, "oa_id", creds.OAID, "expires_at", tok.ExpiresAt)
+	slog.Info("zalo_oa.connected", "instance_id", instID, "oa_id", creds.OAID, "expires_at", tok.ExpiresAt)
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{
 		"ok":         true,
 		"oa_id":      creds.OAID,
@@ -186,7 +186,7 @@ func (m *ZaloOAuthMethods) handleExchangeCode(ctx context.Context, client *gatew
 	}))
 }
 
-func (m *ZaloOAuthMethods) emitCacheInvalidate() {
+func (m *ZaloOAMethods) emitCacheInvalidate() {
 	if m.msgBus == nil {
 		return
 	}
@@ -197,16 +197,16 @@ func (m *ZaloOAuthMethods) emitCacheInvalidate() {
 }
 
 // putState records a freshly minted state token with a 10min TTL.
-func (m *ZaloOAuthMethods) putState(instID uuid.UUID, state string) {
+func (m *ZaloOAMethods) putState(instID uuid.UUID, state string) {
 	m.stateMu.Lock()
 	defer m.stateMu.Unlock()
 	m.gcStatesLocked()
-	m.states[stateKey(instID, state)] = zaloOAuthStateEntry{expiresAt: time.Now().Add(zaloOAuthStateTTL)}
+	m.states[stateKey(instID, state)] = zaloOAStateEntry{expiresAt: time.Now().Add(zaloOAStateTTL)}
 }
 
 // consumeState atomically validates+removes a state token. Returns false
 // if missing or expired.
-func (m *ZaloOAuthMethods) consumeState(instID uuid.UUID, state string) bool {
+func (m *ZaloOAMethods) consumeState(instID uuid.UUID, state string) bool {
 	if state == "" {
 		return false
 	}
@@ -222,7 +222,7 @@ func (m *ZaloOAuthMethods) consumeState(instID uuid.UUID, state string) bool {
 	return true
 }
 
-func (m *ZaloOAuthMethods) gcStatesLocked() {
+func (m *ZaloOAMethods) gcStatesLocked() {
 	now := time.Now()
 	for k, v := range m.states {
 		if now.After(v.expiresAt) {

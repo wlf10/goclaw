@@ -14,13 +14,13 @@ import (
 // ErrAuthExpired indicates the refresh token is no longer valid (single-use
 // rotation burned, or operator revoked the OA permission). Caller must
 // surface this to the operator and block further refreshes until re-auth.
-var ErrAuthExpired = errors.New("zalo_oauth: refresh token expired, re-auth required")
+var ErrAuthExpired = errors.New("zalo_oa: refresh token expired, re-auth required")
 
 // ErrNotAuthorized indicates the channel has not yet completed the
 // paste-code consent flow (no refresh token persisted). Distinct from
 // ErrAuthExpired: this is a "not started" state, not a failure — health
 // reporting should stay Degraded (awaiting consent), not Failed.
-var ErrNotAuthorized = errors.New("zalo_oauth: not yet authorized (paste consent code first)")
+var ErrNotAuthorized = errors.New("zalo_oa: not yet authorized (paste consent code first)")
 
 // classifyRefreshError maps a refresh-call error to either ErrAuthExpired
 // (final, requires operator action) or returns the original error (transient,

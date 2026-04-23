@@ -20,18 +20,18 @@ func Factory(ciStore store.ChannelInstanceStore) channels.ChannelFactory {
 		msgBus *bus.MessageBus, pairingSvc store.PairingStore) (channels.Channel, error) {
 
 		if ciStore == nil {
-			return nil, errors.New("zalo_oauth: nil ChannelInstanceStore")
+			return nil, errors.New("zalo_oa: nil ChannelInstanceStore")
 		}
 
 		creds, err := LoadCreds(credsRaw)
 		if err != nil {
-			return nil, fmt.Errorf("zalo_oauth: decode credentials: %w", err)
+			return nil, fmt.Errorf("zalo_oa: decode credentials: %w", err)
 		}
 
-		var cfg config.ZaloOAuthConfig
+		var cfg config.ZaloOAConfig
 		if len(cfgRaw) > 0 {
 			if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
-				return nil, fmt.Errorf("zalo_oauth: decode config: %w", err)
+				return nil, fmt.Errorf("zalo_oa: decode config: %w", err)
 			}
 		}
 

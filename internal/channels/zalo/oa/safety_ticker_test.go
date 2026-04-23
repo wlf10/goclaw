@@ -18,7 +18,7 @@ import (
 func TestStartStop_TickerShutsDownPromptly(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.ZaloOAuthConfig{
+	cfg := config.ZaloOAConfig{
 		AppID:               "app",
 		SecretKey:           "key",
 		SafetyTickerMinutes: 1, // value irrelevant — we Stop before any tick fires
@@ -64,7 +64,7 @@ func TestSafetyTicker_RefreshesWhenWithinThreshold(t *testing.T) {
 	srv, count := newRefreshServer(t, "")
 	fs := &fakeStore{}
 
-	cfg := config.ZaloOAuthConfig{
+	cfg := config.ZaloOAConfig{
 		AppID:     "app",
 		SecretKey: "key",
 		// 1-second ticker so the test runs quickly. Forced via newWithInterval helper.

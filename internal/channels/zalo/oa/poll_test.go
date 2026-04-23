@@ -66,7 +66,7 @@ func newPollChannel(t *testing.T, ps *pollServer, oaID string) (*Channel, *bus.M
 		RefreshToken: "RT",
 		ExpiresAt:    time.Now().Add(time.Hour),
 	}
-	cfg := config.ZaloOAuthConfig{
+	cfg := config.ZaloOAConfig{
 		AppID:               "app",
 		SecretKey:           "key",
 		PollIntervalSeconds: 1,
@@ -262,7 +262,7 @@ func TestPollOnce_AllowlistBlocksNonAllowedSender(t *testing.T) {
 		AppID: "app", SecretKey: "key", OAID: "oa-1",
 		AccessToken: "AT", RefreshToken: "RT", ExpiresAt: time.Now().Add(time.Hour),
 	}
-	cfg := config.ZaloOAuthConfig{
+	cfg := config.ZaloOAConfig{
 		AppID: "app", SecretKey: "key",
 		AllowFrom: config.FlexibleStringSlice{"allowed"},
 	}

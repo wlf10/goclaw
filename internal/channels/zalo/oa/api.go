@@ -64,7 +64,7 @@ func NewClient(timeout time.Duration) *Client {
 
 // ErrRateLimit indicates Zalo returned HTTP 429. Callers should back off
 // (the polling loop switches to a 30s ticker until a successful cycle).
-var ErrRateLimit = errors.New("zalo_oauth: rate limited")
+var ErrRateLimit = errors.New("zalo_oa: rate limited")
 
 // APIError is returned when Zalo replies with a non-zero error envelope.
 type APIError struct {
@@ -97,7 +97,7 @@ func (e *APIError) isAuth() bool {
 // Surfaces 429 as ErrRateLimit so callers can switch into backoff.
 func (c *Client) apiGet(ctx context.Context, path string, query url.Values, accessToken string) (json.RawMessage, error) {
 	if accessToken == "" {
-		return nil, fmt.Errorf("zalo_oauth: empty access_token for %s", path)
+		return nil, fmt.Errorf("zalo_oa: empty access_token for %s", path)
 	}
 	u := c.apiBase + path
 	if len(query) > 0 {
@@ -118,7 +118,7 @@ func (c *Client) apiGet(ctx context.Context, path string, query url.Values, acce
 // URL (defence-in-depth even though the token is no longer in the URL).
 func (c *Client) apiPost(ctx context.Context, path string, body any, accessToken string) (json.RawMessage, error) {
 	if accessToken == "" {
-		return nil, fmt.Errorf("zalo_oauth: empty access_token for %s", path)
+		return nil, fmt.Errorf("zalo_oa: empty access_token for %s", path)
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
@@ -137,7 +137,7 @@ func (c *Client) apiPost(ctx context.Context, path string, body any, accessToken
 // given form fields. Token is header-carried; same convention as apiPost.
 func (c *Client) apiPostMultipart(ctx context.Context, path string, fileFieldName, fileName string, fileBytes []byte, fields map[string]string, accessToken string) (json.RawMessage, error) {
 	if accessToken == "" {
-		return nil, fmt.Errorf("zalo_oauth: empty access_token for %s", path)
+		return nil, fmt.Errorf("zalo_oa: empty access_token for %s", path)
 	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -197,7 +197,7 @@ func doRequest(client *http.Client, req *http.Request, path string) (json.RawMes
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 	if traceEnabled {
-		slog.Debug("zalo_oauth.raw_response", "path", path, "status", resp.StatusCode, "body", string(raw))
+		slog.Debug("zalo_oa.raw_response", "path", path, "status", resp.StatusCode, "body", string(raw))
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("%w (path=%s)", ErrRateLimit, path)
@@ -240,7 +240,7 @@ func (c *Client) postForm(ctx context.Context, fullURL string, headers map[strin
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 	if traceEnabled {
-		slog.Debug("zalo_oauth.raw_response", "path", "oauth_token", "status", resp.StatusCode, "body", string(raw))
+		slog.Debug("zalo_oa.raw_response", "path", "oauth_token", "status", resp.StatusCode, "body", string(raw))
 	}
 
 	if resp.StatusCode >= 400 {
