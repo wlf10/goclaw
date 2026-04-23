@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/nextlevelbuilder/goclaw/internal/config"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -43,7 +41,7 @@ func TestSendFile_RejectsZeroBytes(t *testing.T) {
 	refresh, _ := newRefreshServer(t, "")
 	c := newSendChannel(t, api, refresh, &fakeStore{})
 
-	_, err := c.SendFile(context.Background(), "u1", []byte{}, "empty.txt", "text/plain")
+	_, err := c.SendFile(context.Background(), "u1", []byte{}, "empty.txt")
 	if err == nil {
 		t.Fatal("expected error for zero-byte file")
 	}
@@ -55,42 +53,3 @@ func TestSendFile_RejectsZeroBytes(t *testing.T) {
 	}
 }
 
-func TestSendFile_RejectsDeniedMIME(t *testing.T) {
-	t.Parallel()
-	api, captured, _ := newAPIServer(t, apiServerOpts{})
-	refresh, _ := newRefreshServer(t, "")
-	c := newSendChannel(t, api, refresh, &fakeStore{})
-	c.cfg.FileDenyMIME = config.FlexibleStringSlice{"application/x-msdownload", "application/x-msdos-program"}
-
-	_, err := c.SendFile(context.Background(), "u1", []byte("MZ\x90\x00fake-exe-bytes"),
-		"setup.exe", "application/x-msdownload")
-	if err == nil {
-		t.Fatal("expected denial error")
-	}
-	if !strings.Contains(strings.ToLower(err.Error()), "denied") &&
-		!strings.Contains(strings.ToLower(err.Error()), "blocked") {
-		t.Errorf("err = %v, want 'denied/blocked' message", err)
-	}
-	if len(*captured) != 0 {
-		t.Errorf("captured %d HTTP calls; expected 0 (rejected before upload)", len(*captured))
-	}
-}
-
-func TestSendFile_PassesAllowedMIME(t *testing.T) {
-	t.Parallel()
-	api, _, _ := newAPIServer(t, apiServerOpts{
-		uploadReply:    `{"error":0,"data":{"token":"T"}}`,
-		messageReplies: []string{`{"error":0,"data":{"message_id":"mid-pdf"}}`},
-	})
-	refresh, _ := newRefreshServer(t, "")
-	c := newSendChannel(t, api, refresh, &fakeStore{})
-	c.cfg.FileDenyMIME = config.FlexibleStringSlice{"application/x-msdownload"} // doesn't match pdf
-
-	mid, err := c.SendFile(context.Background(), "u1", []byte("%PDF-1.4 fake"), "report.pdf", "application/pdf")
-	if err != nil {
-		t.Fatalf("SendFile: %v", err)
-	}
-	if mid != "mid-pdf" {
-		t.Errorf("mid = %q", mid)
-	}
-}

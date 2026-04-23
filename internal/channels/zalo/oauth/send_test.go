@@ -122,9 +122,8 @@ func newSendChannel(t *testing.T, apiSrv, refreshSrv *httptest.Server, fs *fakeS
 		ExpiresAt:    time.Now().Add(time.Hour),
 	}
 	cfg := config.ZaloOAuthConfig{
-		AppID:      "app",
-		SecretKey:  "key",
-		MediaMaxMB: 1, // keep small so size-limit tests are quick
+		AppID:     "app",
+		SecretKey: "key",
 	}
 	msgBus := bus.New()
 	c, err := New("send_test", cfg, creds, fs, msgBus, nil)
@@ -325,7 +324,7 @@ func TestSendFile_UploadsThenAttaches(t *testing.T) {
 	refresh, _ := newRefreshServer(t, "")
 	c := newSendChannel(t, api, refresh, &fakeStore{})
 
-	mid, err := c.SendFile(context.Background(), "user-1", []byte("doc bytes"), "report.pdf", "application/pdf")
+	mid, err := c.SendFile(context.Background(), "user-1", []byte("doc bytes"), "report.pdf")
 	if err != nil {
 		t.Fatalf("SendFile: %v", err)
 	}
@@ -581,16 +580,3 @@ func TestChannelSend_PartialSendOnTrailingTextFailure(t *testing.T) {
 	}
 }
 
-// TestNew_DefaultMediaMaxMB: when cfg.MediaMaxMB is 0 (operator omitted),
-// New must clamp to defaultMediaMaxMB so unlimited uploads aren't allowed.
-func TestNew_DefaultMediaMaxMB(t *testing.T) {
-	t.Parallel()
-	creds := &ChannelCreds{AppID: "a", SecretKey: "s", AccessToken: "AT", RefreshToken: "RT", ExpiresAt: time.Now().Add(time.Hour)}
-	c, err := New("t", config.ZaloOAuthConfig{AppID: "a", SecretKey: "s" /* MediaMaxMB omitted */}, creds, &fakeStore{}, bus.New(), nil)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if c.cfg.MediaMaxMB != defaultMediaMaxMB {
-		t.Errorf("cfg.MediaMaxMB = %d, want default %d (operator omitted config must clamp)", c.cfg.MediaMaxMB, defaultMediaMaxMB)
-	}
-}

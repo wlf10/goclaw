@@ -28,13 +28,11 @@ var ErrPartialSend = errors.New("zalo_oauth: attachment delivered but trailing t
 const (
 	defaultClientTimeout        = 15 * time.Second
 	defaultSafetyTickerInterval = 30 * time.Minute
-	// Zalo OA's image upload endpoint enforces a hard 1MB cap (error -210
-	// "file is invalid. The file must be smaller than or equal 1MB").
-	// AI-generated PNGs routinely exceed this, so we default to the real
-	// cap and reject BEFORE burning an upload call. Operators who know
-	// what they're doing can override via config.MediaMaxMB.
-	defaultMediaMaxMB = 1
 )
+// Per-endpoint upload caps (Zalo OA): image 1MB, file 5MB, gif 5MB.
+// These are hard-enforced by Zalo's own endpoints (error -210). Defined
+// inline at the single callsite in (*Channel).dispatch — see channel.go
+// around the dispatch branch.
 
 // Channel is the phase-02 form. Phase 03 wires Send; phase 04 wires polling.
 type Channel struct {
@@ -76,9 +74,6 @@ func New(name string, cfg config.ZaloOAuthConfig, creds *ChannelCreds,
 		return nil, errors.New("zalo_oauth: app_id and secret_key are required")
 	}
 
-	if cfg.MediaMaxMB <= 0 {
-		cfg.MediaMaxMB = defaultMediaMaxMB
-	}
 	c := &Channel{
 		BaseChannel:          channels.NewBaseChannel(name, msgBus, []string(cfg.AllowFrom)),
 		client:               NewClient(defaultClientTimeout),
@@ -221,7 +216,7 @@ func (c *Channel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 		if len(data) > zaloFileCapBytes {
 			return fmt.Errorf("zalo_oauth: file too large: %d bytes (Zalo cap is 5MB)", len(data))
 		}
-		attachMID, err = c.SendFile(ctx, msg.ChatID, data, filepath.Base(m.URL), mt)
+		attachMID, err = c.SendFile(ctx, msg.ChatID, data, filepath.Base(m.URL))
 	}
 	if err != nil {
 		return err

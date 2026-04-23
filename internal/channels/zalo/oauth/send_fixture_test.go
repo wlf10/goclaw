@@ -62,7 +62,7 @@ func TestSend_WireShape_Fixtures(t *testing.T) {
 		{
 			name: "SendFile",
 			call: func(c *Channel) (string, error) {
-				return c.SendFile(context.Background(), "user-fixture", []byte("%PDF-fake"), "doc.pdf", "application/pdf")
+				return c.SendFile(context.Background(), "user-fixture", []byte("%PDF-fake"), "doc.pdf")
 			},
 			wantReqFixture: "testdata/send_file_request.json",
 			uploadFixture:  "testdata/upload_file_200.json",

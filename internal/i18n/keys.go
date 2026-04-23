@@ -240,5 +240,4 @@ const (
 	MsgZaloOAuthMediaTooLarge      = "error.zalo_oauth_media_too_large"      // "media exceeds size limit (%d MB)"
 	MsgZaloOAuthWindowExpired      = "error.zalo_oauth_window_expired"       // "48-hour user-interaction window expired"
 	MsgZaloOAuthRateLimited        = "warn.zalo_oauth_rate_limited"          // "zalo oauth rate limited; backing off"
-	MsgZaloOAuthFileDenied         = "error.zalo_oauth_file_denied"          // "file MIME type %s is denied by tenant policy"
 )

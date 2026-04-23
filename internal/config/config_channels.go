@@ -167,8 +167,6 @@ type ZaloOAuthConfig struct {
 	SafetyTickerMinutes  int                 `json:"safety_ticker_minutes,omitempty"`  // default 30
 	AllowFrom            FlexibleStringSlice `json:"allow_from,omitempty"`
 	DMPolicy             string              `json:"dm_policy,omitempty"`
-	MediaMaxMB           int                 `json:"media_max_mb,omitempty"`
-	FileDenyMIME         FlexibleStringSlice `json:"file_deny_mime,omitempty"` // optional admin opt-in (e.g. block .exe MIME types)
 	BlockReply           *bool               `json:"block_reply,omitempty"`
 }
 

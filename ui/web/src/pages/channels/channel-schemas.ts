@@ -181,10 +181,8 @@ export const configSchema: Record<string, FieldDef[]> = {
   ],
   zalo_oauth: [
     { key: "poll_interval_seconds", label: "Poll Interval (seconds)", type: "number", defaultValue: 15, help: "How often to fetch new messages. Min 5, max 120." },
-    { key: "media_max_mb", label: "Max Media Size (MB)", type: "number", defaultValue: 10 },
     { key: "allow_from", label: "Allowed Users", type: "tags", help: "Zalo user IDs (empty = allow all)" },
     { key: "dm_policy", label: "DM Policy", type: "select", options: dmPolicyOptions, defaultValue: "pairing" },
-    { key: "file_deny_mime", label: "Blocked File MIME Types", type: "tags", help: "MIME types to reject for outbound files (e.g. application/x-msdownload). Empty = allow all.", advanced: true },
     { key: "block_reply", label: "Block Reply", type: "select", options: blockReplyOptions, defaultValue: "inherit", help: "Deliver intermediate text during tool iterations" },
   ],
   zalo_personal: [
