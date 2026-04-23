@@ -7,12 +7,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
+
+// traceEnvVar, when set to "1", enables slog.Debug dumps of raw response
+// bodies from every Zalo API call. Off by default. Response bodies may
+// contain PII (user display names, phone numbers, user IDs) — do NOT
+// enable in production without scrubbing review.
+const traceEnvVar = "GOCLAW_ZALO_OA_TRACE"
+
+// traceEnabled reports whether GOCLAW_ZALO_OA_TRACE is on for this process.
+// Cached at package init; flipping the env live requires restart.
+var traceEnabled = os.Getenv(traceEnvVar) == "1"
 
 // uploadTimeout is generous because multipart uploads of a few MB over a
 // mobile carrier can take longer than the default 15s API timeout.
@@ -184,6 +196,9 @@ func doRequest(client *http.Client, req *http.Request, path string) (json.RawMes
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
+	if traceEnabled {
+		slog.Debug("zalo_oauth.raw_response", "path", path, "status", resp.StatusCode, "body", string(raw))
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("%w (path=%s)", ErrRateLimit, path)
 	}
@@ -223,6 +238,9 @@ func (c *Client) postForm(ctx context.Context, fullURL string, headers map[strin
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if traceEnabled {
+		slog.Debug("zalo_oauth.raw_response", "path", "oauth_token", "status", resp.StatusCode, "body", string(raw))
 	}
 
 	if resp.StatusCode >= 400 {
