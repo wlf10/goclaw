@@ -35,7 +35,7 @@ export function extractCode(input: string, stashedState: string): { code: string
   }
 }
 
-// Shared state machine for the zalo_oauth paste-code consent flow. Consumed
+// Shared state machine for the zalo_oa paste-code consent flow. Consumed
 // by both the ReauthDialog (triggered from the row) and the WizardAuthStep
 // (auto-triggered after row creation).
 
@@ -79,8 +79,8 @@ export function useZaloOAConnect(
   active: boolean,
   onSuccess: () => void,
 ): UseZaloOAConnectResult {
-  const consent = useWsCall<ConsentResp>("channels.instances.zalo_oauth.consent_url");
-  const exchange = useWsCall<ExchangeResp>("channels.instances.zalo_oauth.exchange_code");
+  const consent = useWsCall<ConsentResp>("channels.instances.zalo_oa.consent_url");
+  const exchange = useWsCall<ExchangeResp>("channels.instances.zalo_oa.exchange_code");
 
   const [code, setCode] = useState("");
   const [state, setState] = useState("");

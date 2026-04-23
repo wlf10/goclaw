@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { UseZaloOAConnectResult } from "./use-zalo-oa-connect";
 
-// Shared two-step body for the zalo_oauth paste-code flow. Rendered inside
+// Shared two-step body for the zalo_oa paste-code flow. Rendered inside
 // either a Dialog (reauth) or the create-wizard step container. The caller
 // provides the hook state via `flow` and renders the action row themselves
 // (so wizard Skip/Connect buttons differ from reauth Cancel/Connect).

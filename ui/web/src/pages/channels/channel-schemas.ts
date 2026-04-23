@@ -65,11 +65,11 @@ export const credentialsSchema: Record<string, FieldDef[]> = {
     { key: "encrypt_key", label: "Encrypt Key", type: "password", help: "For webhook event decryption", showWhen: { key: "connection_mode", value: "webhook" } },
     { key: "verification_token", label: "Verification Token", type: "password", help: "For webhook event verification", showWhen: { key: "connection_mode", value: "webhook" } },
   ],
-  zalo_oa: [
+  zalo_bot: [
     { key: "token", label: "OA Access Token", type: "password", required: true },
     { key: "webhook_secret", label: "Webhook Secret", type: "password" },
   ],
-  zalo_oauth: [
+  zalo_oa: [
     { key: "app_id", label: "App ID", type: "text", required: true, placeholder: "1234567890", help: "From the Zalo OA developer console" },
     { key: "secret_key", label: "Secret Key", type: "password", required: true, help: "OAuth v4 secret. Stored encrypted at rest." },
     { key: "redirect_uri", label: "Redirect URI", type: "text", required: true, placeholder: "https://your-app.com/zalo-callback", help: "MUST match the callback URL registered on the Zalo dev console (Settings → OAuth → Callback). Zalo returns error_code=-14003 'Invalid redirect uri' if these don't match. A static page that just shows the URL bar is enough — you'll copy the `code` query param manually." },
@@ -172,14 +172,14 @@ export const configSchema: Record<string, FieldDef[]> = {
     { key: "group_allow_from", label: "Group Allowed Users", type: "tags", help: "Separate allowlist for group senders" },
     { key: "block_reply", label: "Block Reply", type: "select", options: blockReplyOptions, defaultValue: "inherit", help: "Deliver intermediate text during tool iterations" },
   ],
-  zalo_oa: [
+  zalo_bot: [
     { key: "dm_policy", label: "DM Policy", type: "select", options: dmPolicyOptions, defaultValue: "pairing" },
     { key: "webhook_url", label: "Webhook URL", type: "text", placeholder: "https://..." },
     { key: "media_max_mb", label: "Max Media Size (MB)", type: "number", defaultValue: 5 },
     { key: "allow_from", label: "Allowed Users", type: "tags", help: "Zalo user IDs" },
     { key: "block_reply", label: "Block Reply", type: "select", options: blockReplyOptions, defaultValue: "inherit", help: "Deliver intermediate text during tool iterations" },
   ],
-  zalo_oauth: [
+  zalo_oa: [
     { key: "poll_interval_seconds", label: "Poll Interval (seconds)", type: "number", defaultValue: 15, help: "How often to fetch new messages. Min 5, max 120." },
     { key: "allow_from", label: "Allowed Users", type: "tags", help: "Zalo user IDs (empty = allow all)" },
     { key: "dm_policy", label: "DM Policy", type: "select", options: dmPolicyOptions, defaultValue: "pairing" },
@@ -320,9 +320,9 @@ export const wizardConfig: Partial<Record<string, WizardConfig>> = {
     createLabel: "wizard.whatsapp.createLabel",
     formBanner: "wizard.whatsapp.formBanner",
   },
-  zalo_oauth: {
+  zalo_oa: {
     steps: ["auth"],
-    createLabel: "wizard.zaloOauth.createLabel",
-    formBanner: "wizard.zaloOauth.formBanner",
+    createLabel: "wizard.zaloOa.createLabel",
+    formBanner: "wizard.zaloOa.formBanner",
   },
 };

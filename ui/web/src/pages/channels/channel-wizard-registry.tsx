@@ -57,7 +57,7 @@ import { WhatsAppReauthDialog } from "./whatsapp/whatsapp-reauth-dialog";
 
 export const wizardAuthSteps: Record<string, ComponentType<WizardAuthStepProps>> = {
   zalo_personal: ZaloAuthStep,
-  zalo_oauth: ZaloOAAuthStep,
+  zalo_oa: ZaloOAAuthStep,
   whatsapp: WhatsAppAuthStep,
 };
 
@@ -72,7 +72,7 @@ export const wizardEditConfigs: Record<string, ComponentType<WizardEditConfigPro
 /** Re-auth dialogs for re-authentication from the channels table */
 export const reauthDialogs: Record<string, ComponentType<ReauthDialogProps>> = {
   zalo_personal: ZaloPersonalQRDialog,
-  zalo_oauth: ZaloOAConsentDialog,
+  zalo_oa: ZaloOAConsentDialog,
   whatsapp: WhatsAppReauthDialog,
 };
 
