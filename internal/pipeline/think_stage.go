@@ -1,79 +1,202 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
-	"github.com/wlf10/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/providers"
 )
 
-// ThinkStage handles truncation retries for LLM responses with finish_reason="length".
-// It preserves the original reasoning content and tool calls for retry messages.
+const maxTruncRetries = 3
+
+// ThinkStage runs per iteration. Calls LLM, handles truncation retries,
+// accumulates usage, returns BreakLoop when response has no tool calls.
 type ThinkStage struct {
-	maxRetries int
+	deps   *PipelineDeps
+	result StageResult
 }
 
-func NewThinkStage(maxRetries int) *ThinkStage {
-	return &ThinkStage{maxRetries: maxRetries}
+// NewThinkStage creates a ThinkStage.
+func NewThinkStage(deps *PipelineDeps) *ThinkStage {
+	return &ThinkStage{deps: deps, result: Continue}
 }
 
-func (s *ThinkStage) Name() string {
-	return "think"
+func (s *ThinkStage) Name() string       { return "think" }
+func (s *ThinkStage) Result() StageResult { return s.result }
+
+// Execute builds tools, calls LLM, handles truncation, sets flow control.
+func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
+	s.result = Continue
+
+	// 1. Iteration budget nudges (70% / 90%)
+	s.maybeInjectNudge(state)
+
+	// 2. Build filtered tool definitions
+	var toolDefs []providers.ToolDefinition
+	if s.deps.BuildFilteredTools != nil {
+		var err error
+		toolDefs, err = s.deps.BuildFilteredTools(state)
+		if err != nil {
+			return fmt.Errorf("build tools: %w", err)
+		}
+	}
+
+	// 3. Construct ChatRequest
+	req := providers.ChatRequest{
+		Messages: state.Messages.All(),
+		Tools:    toolDefs,
+		Model:    state.Model,
+		Options: map[string]any{
+			providers.OptMaxTokens: s.deps.Config.MaxTokens,
+		},
+	}
+
+	// 4. Call LLM (stream or sync — delegated to callback)
+	if s.deps.CallLLM == nil {
+		return fmt.Errorf("CallLLM callback not configured")
+	}
+	resp, err := s.deps.CallLLM(ctx, state, req)
+	if err != nil {
+		// Issue 958: Check for context overflow — attempt emergency compaction + retry
+		if isContextOverflowErr(err) {
+			if state.Think.OverflowRetries > 0 {
+				return fmt.Errorf("context overflow after compaction: %w", err)
+			}
+			state.Think.OverflowRetries++
+			// Attempt emergency compaction
+			if s.deps.CompactMessages != nil {
+				originalLen := len(state.Messages.History())
+				compacted, compactErr := s.deps.CompactMessages(ctx, state.Messages.History(), state.Model)
+				if compactErr == nil {
+					state.Messages.ReplaceHistory(compacted)
+					slog.Info("emergency_compaction_triggered",
+						"run_id", state.RunID,
+						"original_msgs", originalLen,
+						"compacted_msgs", len(compacted),
+					)
+					return nil // Retry this iteration (Continue result)
+				}
+				slog.Warn("emergency_compaction_failed", "error", compactErr)
+			}
+		}
+		return fmt.Errorf("llm call: %w", err)
+	}
+	state.Think.LastResponse = resp
+
+	// 5. Accumulate usage (including ThinkingTokens for reasoning models)
+	if resp.Usage != nil {
+		state.Think.TotalUsage.PromptTokens += resp.Usage.PromptTokens
+		state.Think.TotalUsage.CompletionTokens += resp.Usage.CompletionTokens
+		state.Think.TotalUsage.TotalTokens += resp.Usage.TotalTokens
+		state.Think.TotalUsage.ThinkingTokens += resp.Usage.ThinkingTokens
+	}
+
+	// 6. Handle truncation: retry when tool call args are truncated or malformed.
+	truncated := len(resp.ToolCalls) > 0 && (resp.FinishReason == "length" ||
+		(resp.FinishReason == "tool_calls" && toolCallsHaveMissingRequiredArgs(resp.ToolCalls)))
+	parseErr := !truncated && toolCallsHaveParseErrors(resp.ToolCalls)
+	if truncated || parseErr {
+		state.Think.TruncRetries++
+		if state.Think.TruncRetries >= maxTruncRetries {
+			s.result = AbortRun
+			return nil
+		}
+		hint := "[System] Your output was truncated because it exceeded max_tokens. Your tool call arguments were incomplete. Please retry with shorter content — split large writes into multiple smaller calls."
+		if parseErr {
+			hint = "[System] One or more tool call arguments were malformed (truncated JSON). Please retry with shorter content."
+		}
+		state.Messages.AppendPending(providers.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			Thinking:  resp.Thinking,
+			ToolCalls: resp.ToolCalls,
+		})
+		state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
+		return nil // Continue to next iteration for retry
+	}
+	state.Think.TruncRetries = 0
+	state.Think.OverflowRetries = 0
+
+	// 7. Uniquify tool call IDs
+	if len(resp.ToolCalls) > 0 && resp.RawAssistantContent == nil && s.deps.UniqueToolCallIDs != nil {
+		resp.ToolCalls = s.deps.UniqueToolCallIDs(resp.ToolCalls, state.RunID, state.Iteration)
+	}
+
+	// 8. Flow control + message append.
+	if len(resp.ToolCalls) == 0 {
+		s.result = BreakLoop
+		return nil
+	}
+
+	assistantMsg := providers.Message{
+		Role:                "assistant",
+		Content:             resp.Content,
+		Thinking:            resp.Thinking,
+		ToolCalls:           resp.ToolCalls,
+		Phase:               resp.Phase,
+		RawAssistantContent: resp.RawAssistantContent,
+	}
+	state.Messages.AppendPending(assistantMsg)
+
+	if resp.Content != "" && s.deps.EmitBlockReply != nil {
+		s.deps.EmitBlockReply(resp.Content)
+	}
+
+	return nil
 }
 
-func (s *ThinkStage) IsRequired(state *RunState) bool {
+func (s *ThinkStage) maybeInjectNudge(state *RunState) {
+	maxIter := s.deps.Config.MaxIterations
+	if maxIter <= 0 {
+		return
+	}
+	pct := float64(state.Iteration) / float64(maxIter)
+	if pct >= 0.9 && !state.Evolution.Nudge90Sent {
+		state.Evolution.Nudge90Sent = true
+		state.Messages.AppendPending(providers.Message{
+			Role:    "user",
+			Content: "[System] URGENT: You are at 90% of your iteration budget.",
+		})
+	} else if pct >= 0.7 && !state.Evolution.Nudge70Sent {
+		state.Evolution.Nudge70Sent = true
+		state.Messages.AppendPending(providers.Message{
+			Role:    "user",
+			Content: "[System] You have used 70% of your iteration budget.",
+		})
+	}
+}
+
+func toolCallsHaveParseErrors(calls []providers.ToolCall) bool {
+	for _, tc := range calls {
+		if tc.ParseError != "" {
+			return true
+		}
+	}
 	return false
 }
 
-func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
-	if state.Response == nil || state.Response.FinishReason != "length" {
-		return nil
-	}
+var mutatingToolsRequireArgs = map[string]struct{}{
+	"write_file": {}, "edit": {}, "exec": {}, "create_image": {}, "read_file": {},
+}
 
-	resp := state.Response
-	if !hasToolCalls(state.Messages.All()) {
-		return nil
-	}
-
-	retries := 0
-	if s.maxRetries > 0 {
-		retries = s.maxRetries
-	}
-
-	for i := 0; i <= retries; i++ {
-		state.Iteration++
-
-		chatReq := *state.ChatRequest
-		resp, err := state.Provider.Chat(ctx, &chatReq)
-		if err != nil {
-			return fmt.Errorf("think stage retry %d: %w", i, err)
+func toolCallsHaveMissingRequiredArgs(calls []providers.ToolCall) bool {
+	for _, tc := range calls {
+		if _, requires := mutatingToolsRequireArgs[tc.Name]; !requires {
+			continue
 		}
-
-		if resp.FinishReason != "length" {
-			state.Response = resp
-			return nil
-		}
-
-		_ = resp
-	}
-
-	// Truncation retry exhausted — build hint
-	resp = state.Response
-	hint := "[System] The response was truncated. Please continue from where you left off."
-	if resp != nil {
-		for _, tc := range resp.ToolCalls {
-			if tc.Function != nil && !strings.HasSuffix(tc.Function.Arguments, "}") {
-				hint = "[System] One or more tool call arguments were malformed (truncated JSON). Please retry with shorter content."
-				break
-			}
+		if len(tc.Arguments) == 0 {
+			return true
 		}
 	}
-	state.Messages.AppendPending(providers.Message{
-		Role:      "assistant",
-		Content:   resp.Content,
-		Thinking:  resp.Thinking,
-		ToolCalls: resp.ToolCalls,
-	})
-	state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
-	return nil
+	return false
+}
+
+func isContextOverflowErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return providers.IsContextOverflowMessage(lower)
 }
