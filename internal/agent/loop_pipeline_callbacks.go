@@ -32,7 +32,7 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		event.UserID = req.UserID
 		event.Channel = req.Channel
 		event.ChatID = req.ChatID
-		event.MessageID = req.MessageID
+		event.SessionKey = req.SessionKey
 		event.TenantID = l.tenantID
 		l.emit(event)
 	}
