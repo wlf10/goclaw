@@ -28,14 +28,12 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		}
 	}
 
-	// Drop user-visible reasoning for models flagged as leakers (e.g. Kimi,
-	// DeepSeek-Reasoner). Usage.ThinkingTokens is preserved so billing stays
-	// correct (Phase 1 depends on this).
-	if resp != nil {
-		if strip, _ := req.Options[OptStripThinking].(bool); strip {
-			resp.Thinking = ""
-		}
-	}
+	// OptStripThinking controls user-facing thinking events (stream chunks,
+	// ChatEventThinking) — it must NOT clear resp.Thinking because leaker
+	// models (DeepSeek-Reasoner, Kimi) require reasoning_content to be
+	// echoed back on subsequent requests. Usage.ThinkingTokens is preserved
+	// for billing; user-facing suppression happens in the pipeline callback
+	// (loop_pipeline_callbacks.go: makeCallLLM, ChatEventThinking gate).
 
 	return resp, err
 }
@@ -126,9 +124,11 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		if reasoning == "" {
 			reasoning = delta.Reasoning
 		}
-		if reasoning != "" && !stripThinking {
+		// Always accumulate reasoning in result.Thinking for API echoing.
+		// Only suppress the user-facing chunk event when stripThinking is set.
+		if reasoning != "" {
 			result.Thinking += reasoning
-			if onChunk != nil {
+			if !stripThinking && onChunk != nil {
 				onChunk(StreamChunk{Thinking: reasoning})
 			}
 		}

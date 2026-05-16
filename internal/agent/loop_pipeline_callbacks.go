@@ -290,9 +290,12 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 			resp, err = provider.Chat(ctx, chatReq)
 		}
 
-		// Non-streaming: emit content events matching v2 behavior (channels need these).
+		// Non-streaming: emit content events. Strip thinking events when
+		// OptStripThinking is set (leaker models like DeepSeek-Reasoner).
+		// resp.Thinking is always preserved internally for API echoing.
 		if !req.Stream && err == nil && resp != nil {
-			if resp.Thinking != "" {
+			stripUserThinking, _ := chatReq.Options[providers.OptStripThinking].(bool)
+			if resp.Thinking != "" && !stripUserThinking {
 				emitRun(AgentEvent{
 					Type:    protocol.ChatEventThinking,
 					AgentID: l.id,
