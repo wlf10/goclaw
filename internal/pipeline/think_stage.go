@@ -57,7 +57,7 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 		_ = resp
 	}
 
-	// Truncation retry exhausted — build hint and retry with preserved thinking + tool calls
+	// Truncation retry exhausted — build hint
 	resp = state.Response
 	hint := "[System] The response was truncated. Please continue from where you left off."
 	if resp != nil {
@@ -76,14 +76,4 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 	})
 	state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
 	return nil
-}
-
-// hasToolCalls checks if any message in the slice contains tool calls.
-func hasToolCalls(msgs []providers.Message) bool {
-	for _, msg := range msgs {
-		if len(msg.ToolCalls) > 0 {
-			return true
-		}
-	}
-	return false
 }
