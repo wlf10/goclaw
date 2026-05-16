@@ -54,10 +54,16 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 			"role": role,
 		}
 
-		// Echo reasoning_content only for APIs/models that accept it on assistant history.
-		// Together Qwen and many OpenAI-compat gateways reject unknown message fields → HTTP 400.
-		if m.Thinking != "" && m.Role == "assistant" && openAIWireAssistantReasoningContent(model) {
-			msg["reasoning_content"] = m.Thinking
+		// Echo reasoning_content for DeepSeek/Kimi/O-series models that require
+		// it on EVERY assistant message — even when empty — or they return 400.
+		// Together/Qwen gateways reject unknown fields; the allowlist in
+		// openAIWireAssistantReasoningContent ensures we only emit for compatible APIs.
+		if m.Role == "assistant" && openAIWireAssistantReasoningContent(model) {
+			if m.Thinking != "" {
+				msg["reasoning_content"] = m.Thinking
+			} else {
+				msg["reasoning_content"] = ""
+			}
 		}
 
 		// Include content; omit empty content for assistant messages with tool_calls
@@ -131,7 +137,6 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 
 	// Safety net: strip trailing assistant message to prevent HTTP 400 from
 	// proxy providers (LiteLLM, OpenRouter) that don't support assistant prefill.
-	// This should rarely trigger — the agent loop ensures user message is last.
 	if len(msgs) > 0 {
 		if role, _ := msgs[len(msgs)-1]["role"].(string); role == "assistant" {
 			slog.Warn("openai: stripped trailing assistant message (unsupported prefill)",
@@ -161,9 +166,6 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 	// Merge options
 	capabilityModel := modelFamily(model)
 	if v, ok := req.Options[OptMaxTokens]; ok {
-		// Fireworks requires stream=true for max_tokens > 4096.
-		// Clamp proactively to avoid a 400 round-trip (their error format
-		// doesn't match the generic clampMaxTokensFromError regex).
 		if !stream && p.isFireworksEndpoint() {
 			if maxTokens, isInt := v.(int); isInt && maxTokens > 4096 {
 				v = 4096
@@ -177,28 +179,18 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 		}
 	}
 	if v, ok := req.Options[OptTemperature]; ok {
-		// Certain model families don't support custom temperature (locked to default).
-		// This is a model-level constraint, not provider-specific — applies to both OpenAI and Azure.
-		// Note: gpt-5.X flagship models (gpt-5.1, gpt-5.4) DO support temperature;
-		// only the mini/nano reasoning variants reject it.
 		skipTemp := strings.HasPrefix(capabilityModel, "gpt-5-mini") || strings.HasPrefix(capabilityModel, "gpt-5-nano") || strings.HasPrefix(capabilityModel, "o1") || strings.HasPrefix(capabilityModel, "o3") || strings.HasPrefix(capabilityModel, "o4")
 		if !skipTemp {
 			body["temperature"] = v
 		}
 	}
 
-	// reasoning_effort is OpenAI-specific; do not send to third-party OpenAI-compatible APIs.
 	if level, ok := req.Options[OptThinkingLevel].(string); ok && level != "" && level != "off" {
 		if openAIModelSupportsReasoningEffort(model) {
 			body[OptReasoningEffort] = level
 		}
 	}
 
-	// Gemini (Google OpenAI-compat) accepts reasoning_effort mapped to thinking_config.
-	// Without forwarding, Gemini 3 defaults to "high" thinking and consumes the entire
-	// max_tokens budget, leaving no room for tool call arguments on small models.
-	// Gate narrowly: apiBase contains "generativelanguage" OR model substring "gemini"
-	// (covers OpenRouter / LiteLLM / Vertex proxies).
 	if _, already := body[OptReasoningEffort]; !already && p.isGeminiRoute(model) {
 		if level, ok := req.Options[OptThinkingLevel].(string); ok {
 			if mapped, forward := mapGeminiReasoningEffort(level); forward {
@@ -207,7 +199,6 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 		}
 	}
 
-	// DashScope-specific passthrough keys — never send to other OpenAI-compat hosts.
 	if p.dashScopePassthroughKeys() {
 		if v, ok := req.Options[OptEnableThinking]; ok {
 			body[OptEnableThinking] = v
@@ -220,9 +211,6 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 	return body
 }
 
-// buildToolNameIndex returns a raw-ID → tool-name map drawn from every assistant
-// message's ToolCalls. Used at serialize time to populate role=tool wire messages
-// with their originating tool's name (required by Google Gemini OpenAI-compat shim).
 func buildToolNameIndex(msgs []Message) map[string]string {
 	idx := map[string]string{}
 	for _, m := range msgs {
@@ -238,10 +226,6 @@ func buildToolNameIndex(msgs []Message) map[string]string {
 	return idx
 }
 
-// isGeminiRoute returns true when this OpenAI-compat request targets Gemini,
-// either via the native Google endpoint or a proxy (OpenRouter, LiteLLM) that
-// routes by model string. Narrower than the supportsThoughtSignature gate —
-// we require explicit intent before forwarding reasoning_effort on proxies.
 func (p *OpenAIProvider) isGeminiRoute(model string) bool {
 	if strings.Contains(strings.ToLower(p.apiBase), "generativelanguage") {
 		return true
@@ -249,12 +233,6 @@ func (p *OpenAIProvider) isGeminiRoute(model string) bool {
 	return strings.Contains(strings.ToLower(model), "gemini")
 }
 
-// mapGeminiReasoningEffort returns (value, shouldForward). Gemini 3 Preview
-// rejects "medium" with HTTP 400, so we map it to the nearest valid option.
-// "off" maps to "low" (the minimum effort accepted by all Gemini models via
-// OpenAI-compat). Forwarding is required because Gemini's default is "high",
-// which consumes the entire max_tokens budget on reasoning traces and leaves
-// no room for the response. Unknown values do not forward.
 func mapGeminiReasoningEffort(level string) (string, bool) {
 	switch level {
 	case "low", "minimal", "high":
@@ -268,8 +246,6 @@ func mapGeminiReasoningEffort(level string) (string, bool) {
 	}
 }
 
-// modelFamily strips provider prefixes (for example "openai/o3-mini") so capability
-// gates apply to the actual model family rather than the transport-specific wrapper.
 func modelFamily(model string) string {
 	if idx := strings.LastIndex(model, "/"); idx >= 0 && idx < len(model)-1 {
 		return model[idx+1:]
@@ -277,9 +253,6 @@ func modelFamily(model string) string {
 	return model
 }
 
-// openAIModelSupportsReasoningEffort is true when the Chat Completions request may include
-// the top-level "reasoning_effort" field (OpenAI o-series / GPT-5 family).
-// Other OpenAI-compatible hosts (Together, Groq, vLLM, etc.) often reject unknown fields with HTTP 400.
 func openAIModelSupportsReasoningEffort(model string) bool {
 	if LookupReasoningCapability(model) != nil {
 		return true
@@ -293,11 +266,6 @@ func openAIModelSupportsReasoningEffort(model string) bool {
 	return false
 }
 
-// buildToolsPayload serializes tools for the OpenAI-compat tools array.
-//   - function tools → {"type":"function","function":{cleaned schema}}
-//   - native tools (e.g. "image_generation") → {"type": t.Type} bare object
-//
-// Ordering is preserved.
 func buildToolsPayload(schemaProvider string, tools []ToolDefinition) []map[string]any {
 	cleaned := CleanToolSchemas(schemaProvider, tools)
 	out := make([]map[string]any, 0, len(cleaned))
@@ -321,8 +289,6 @@ func buildToolsPayload(schemaProvider string, tools []ToolDefinition) []map[stri
 				"function": fn,
 			})
 		default:
-			// Native provider tool — emit as bare {"type": X}.
-			// Richer field serialization is deferred to later phases.
 			out = append(out, map[string]any{
 				"type": t.Type,
 			})
@@ -331,8 +297,6 @@ func buildToolsPayload(schemaProvider string, tools []ToolDefinition) []map[stri
 	return out
 }
 
-// openAIWireAssistantReasoningContent is true when assistant message objects may include
-// "reasoning_content" (thinking replay). Narrow allowlist — most OpenAI-compat hosts reject it.
 func openAIWireAssistantReasoningContent(model string) bool {
 	if openAIModelSupportsReasoningEffort(model) {
 		return true
