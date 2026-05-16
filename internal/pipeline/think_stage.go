@@ -116,6 +116,7 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 			Role:     "assistant",
 			Content:  resp.Content,
 			Thinking: resp.Thinking,
+			ToolCalls: resp.ToolCalls,
 		})
 		state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
 		return nil // Continue to next iteration for retry
