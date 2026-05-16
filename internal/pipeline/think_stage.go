@@ -94,6 +94,11 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 	}
 
 	// 6. Handle truncation: retry when tool call args are truncated or malformed.
+	// Gemini returns finish_reason="tool_calls" (not "length") even when the thinking
+	// budget exhausted max_tokens before args could be emitted — detect via empty
+	// args on allowlisted mutating tools. Nullary tools (datetime, heartbeat) skip
+	// the heuristic so their legitimate empty-args calls pass through.
+	// Text-only truncation (no tool calls) is a valid long answer — deliver it.
 	truncated := len(resp.ToolCalls) > 0 && (resp.FinishReason == "length" ||
 		(resp.FinishReason == "tool_calls" && toolCallsHaveMissingRequiredArgs(resp.ToolCalls)))
 	parseErr := !truncated && toolCallsHaveParseErrors(resp.ToolCalls)
@@ -108,38 +113,45 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 			hint = "[System] One or more tool call arguments were malformed (truncated JSON). Please retry with shorter content."
 		}
 		state.Messages.AppendPending(providers.Message{
-			Role:      "assistant",
-			Content:   resp.Content,
-			Thinking:  resp.Thinking,
+			Role:     "assistant",
+			Content:  resp.Content,
+			Thinking: resp.Thinking,
 			ToolCalls: resp.ToolCalls,
 		})
 		state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
 		return nil // Continue to next iteration for retry
 	}
-	state.Think.TruncRetries = 0
-	state.Think.OverflowRetries = 0
+	state.Think.TruncRetries = 0    // reset on success
+	state.Think.OverflowRetries = 0 // reset on success
 
-	// 7. Uniquify tool call IDs
+	// 7. Uniquify tool call IDs (OpenAI returns 400 on duplicates across iterations).
+	// Skip if raw content present (Anthropic thinking passback) to avoid desync.
 	if len(resp.ToolCalls) > 0 && resp.RawAssistantContent == nil && s.deps.UniqueToolCallIDs != nil {
 		resp.ToolCalls = s.deps.UniqueToolCallIDs(resp.ToolCalls, state.RunID, state.Iteration)
 	}
 
 	// 8. Flow control + message append.
+	// Final answer (no tool calls): FinalizeStage builds the definitive assistant
+	// message with sanitization + MediaRefs, so skip AppendPending here to avoid
+	// a duplicate. Matches v2 behavior where loop breaks before appending.
 	if len(resp.ToolCalls) == 0 {
 		s.result = BreakLoop
 		return nil
 	}
 
+	// Tool iteration: append assistant message for LLM context continuity.
 	assistantMsg := providers.Message{
 		Role:                "assistant",
 		Content:             resp.Content,
 		Thinking:            resp.Thinking,
 		ToolCalls:           resp.ToolCalls,
-		Phase:               resp.Phase,
-		RawAssistantContent: resp.RawAssistantContent,
+		Phase:               resp.Phase,               // Codex phase metadata
+		RawAssistantContent: resp.RawAssistantContent, // Anthropic thinking blocks passback
 	}
 	state.Messages.AppendPending(assistantMsg)
 
+	// Emit block.reply for intermediate assistant content during tool iterations.
+	// Non-streaming channels (Zalo, Discord, WhatsApp) need this for delivery.
 	if resp.Content != "" && s.deps.EmitBlockReply != nil {
 		s.deps.EmitBlockReply(resp.Content)
 	}
@@ -147,27 +159,31 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 	return nil
 }
 
+// maybeInjectNudge injects iteration budget warnings at 70% and 90%.
 func (s *ThinkStage) maybeInjectNudge(state *RunState) {
 	maxIter := s.deps.Config.MaxIterations
 	if maxIter <= 0 {
 		return
 	}
 	pct := float64(state.Iteration) / float64(maxIter)
+
 	if pct >= 0.9 && !state.Evolution.Nudge90Sent {
 		state.Evolution.Nudge90Sent = true
 		state.Messages.AppendPending(providers.Message{
 			Role:    "user",
-			Content: "[System] URGENT: You are at 90% of your iteration budget.",
+			Content: "[System] URGENT: You are at 90% of your iteration budget. Wrap up immediately — deliver final results now.",
 		})
 	} else if pct >= 0.7 && !state.Evolution.Nudge70Sent {
 		state.Evolution.Nudge70Sent = true
 		state.Messages.AppendPending(providers.Message{
 			Role:    "user",
-			Content: "[System] You have used 70% of your iteration budget.",
+			Content: "[System] You have used 70% of your iteration budget. Start wrapping up your work.",
 		})
 	}
 }
 
+// toolCallsHaveParseErrors returns true if any tool call has a non-empty ParseError,
+// indicating the arguments JSON was malformed or truncated by the provider.
 func toolCallsHaveParseErrors(calls []providers.ToolCall) bool {
 	for _, tc := range calls {
 		if tc.ParseError != "" {
@@ -177,10 +193,24 @@ func toolCallsHaveParseErrors(calls []providers.ToolCall) bool {
 	return false
 }
 
+// mutatingToolsRequireArgs is the static allowlist of tools where empty
+// arguments are virtually never legitimate. Production telemetry (30d) shows
+// 1/211 tool_call spans had empty args (the Gemini-3 budget-exhaustion trace);
+// datetime/heartbeat/web_search always carry args. Conservative scope — expand
+// only with telemetry justification.
 var mutatingToolsRequireArgs = map[string]struct{}{
-	"write_file": {}, "edit": {}, "exec": {}, "create_image": {}, "read_file": {},
+	"write_file":   {},
+	"edit":         {},
+	"exec":         {},
+	"create_image": {},
+	"read_file":    {},
 }
 
+// toolCallsHaveMissingRequiredArgs returns true when any call in the batch
+// targets a mutating tool from the allowlist but carries empty Arguments.
+// This is the Gemini-3 truncation signal: finish_reason="tool_calls" with
+// len(args)==0 on a tool we know requires params means the budget ran out
+// before args could be emitted.
 func toolCallsHaveMissingRequiredArgs(calls []providers.ToolCall) bool {
 	for _, tc := range calls {
 		if _, requires := mutatingToolsRequireArgs[tc.Name]; !requires {
@@ -193,6 +223,8 @@ func toolCallsHaveMissingRequiredArgs(calls []providers.ToolCall) bool {
 	return false
 }
 
+// isContextOverflowErr checks if an error indicates context window overflow.
+// Uses the exported helper from providers package for pattern matching.
 func isContextOverflowErr(err error) bool {
 	if err == nil {
 		return false
