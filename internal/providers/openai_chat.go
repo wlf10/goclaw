@@ -28,14 +28,12 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		}
 	}
 
-	// Drop user-visible reasoning for models flagged as leakers (e.g. Kimi,
-	// DeepSeek-Reasoner). Usage.ThinkingTokens is preserved so billing stays
-	// correct (Phase 1 depends on this).
-	if resp != nil {
-		if strip, _ := req.Options[OptStripThinking].(bool); strip {
-			resp.Thinking = ""
-		}
-	}
+	// OptStripThinking controls user-facing thinking events (stream chunks,
+	// ChatEventThinking) — it must NOT clear resp.Thinking because leaker
+	// models (DeepSeek-Reasoner, Kimi) require reasoning_content to be
+	// echoed back on subsequent requests. Usage.ThinkingTokens is preserved
+	// for billing; user-facing suppression happens in the pipeline callback
+	// (loop_pipeline_callbacks.go: makeCallLLM, ChatEventThinking gate).
 
 	return resp, err
 }
@@ -61,8 +59,9 @@ func (p *OpenAIProvider) chatRequestFn(ctx context.Context, body map[string]any)
 
 func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk func(StreamChunk)) (*ChatResponse, error) {
 	model := p.resolveModel(req.Model)
-	// stripThinking suppresses user-visible reasoning while leaving
-	// Usage.ThinkingTokens untouched (the usage chunk below still records it).
+	// stripThinking suppresses user-visible reasoning events, but the
+	// content must still be accumulated in result.Thinking for API echoing
+	// (DeepSeek requires reasoning_content on subsequent requests).
 	stripThinking, _ := req.Options[OptStripThinking].(bool)
 	body := p.buildRequestBody(model, req, true)
 	body = ApplyMiddlewares(body, p.middlewares, p.middlewareConfig(model, req))
@@ -101,8 +100,6 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		}
 
 		// Usage chunk often has empty choices — extract usage before skipping.
-		// When stream_options.include_usage is true, the final chunk contains
-		// usage data but choices is typically an empty array.
 		if chunk.Usage != nil {
 			result.Usage = &Usage{
 				PromptTokens:     chunk.Usage.PromptTokens,
@@ -126,9 +123,11 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		if reasoning == "" {
 			reasoning = delta.Reasoning
 		}
-		if reasoning != "" && !stripThinking {
+		// Always accumulate reasoning in result.Thinking for API echoing.
+		// Only suppress the user-facing chunk event when stripThinking is set.
+		if reasoning != "" {
 			result.Thinking += reasoning
-			if onChunk != nil {
+			if !stripThinking && onChunk != nil {
 				onChunk(StreamChunk{Thinking: reasoning})
 			}
 		}
@@ -140,8 +139,6 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		}
 
 		// Accumulate images from delta.images[].
-		// Each chunk may carry one or more image parts; we collect all into result.Images.
-		// Malformed data URLs are skipped with a warning — they don't abort the stream.
 		for _, img := range delta.Images {
 			mimeType, b64Data, err := parseDataURL(img.ImageURL.URL)
 			if err != nil {
@@ -176,10 +173,8 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		if chunk.Choices[0].FinishReason != "" {
 			result.FinishReason = chunk.Choices[0].FinishReason
 		}
-
 	}
 
-	// Check for scanner errors (timeout, connection reset, etc.)
 	if err := sse.Err(); err != nil {
 		return nil, fmt.Errorf("%s: stream read error: %w", p.name, err)
 	}
@@ -200,8 +195,6 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 		result.ToolCalls = append(result.ToolCalls, acc.ToolCall)
 	}
 
-	// Only override finish_reason when stream wasn't truncated.
-	// Preserve "length" so agent loop can detect truncation and retry.
 	if len(result.ToolCalls) > 0 && result.FinishReason != "length" {
 		result.FinishReason = "tool_calls"
 	}
@@ -215,16 +208,11 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 
 const maxToolCallIDLen = 40
 
-// normalizeMistralToolCallID deterministically maps any tool call ID to a
-// 9-character alphanumeric string required by the Mistral API.
-// Uses SHA-256 of the full ID to avoid prefix-dependent collisions.
 func normalizeMistralToolCallID(id string) string {
 	h := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(h[:])[:9]
 }
 
-// wireToolCallID dispatches to Mistral-specific normalization (9-char alnum)
-// or the standard OpenAI truncation (40-char max) based on the provider.
 func (p *OpenAIProvider) wireToolCallID(id string) string {
 	if p.name == "mistral" || p.providerType == "mistral" {
 		return normalizeMistralToolCallID(id)
@@ -232,13 +220,6 @@ func (p *OpenAIProvider) wireToolCallID(id string) string {
 	return truncateToolCallID(id)
 }
 
-// truncateToolCallID deterministically fits tool call IDs into OpenAI's 40-char
-// limit. Prefix truncation can alias distinct legacy IDs that only diverge after
-// byte 40, so we hash the full original ID when shortening is needed.
-//
-// Fresh tool calls from the agent loop already go through uniquifyToolCallIDs
-// (which produces 40-char hashed IDs), so this is a no-op for those. This
-// function catches replayed/legacy history entries that bypassed uniquification.
 func truncateToolCallID(id string) string {
 	if len(id) <= maxToolCallIDLen {
 		return id
