@@ -54,10 +54,17 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 			"role": role,
 		}
 
-		// Echo reasoning_content only for APIs/models that accept it on assistant history.
-		// Together Qwen and many OpenAI-compat gateways reject unknown message fields → HTTP 400.
-		if m.Thinking != "" && m.Role == "assistant" && openAIWireAssistantReasoningContent(model) {
-			msg["reasoning_content"] = m.Thinking
+		// Echo reasoning_content for APIs/models that require it on every assistant
+		// message — DeepSeek thinking mode returns HTTP 400 if any assistant message
+		// lacks the field, even when empty. Together/Qwen gateways reject unknown
+		// fields; the allowlist in openAIWireAssistantReasoningContent ensures we
+		// only emit for compatible APIs.
+		if m.Role == "assistant" && openAIWireAssistantReasoningContent(model) {
+			if m.Thinking != "" {
+				msg["reasoning_content"] = m.Thinking
+			} else {
+				msg["reasoning_content"] = ""
+			}
 		}
 
 		// Include content; omit empty content for assistant messages with tool_calls
