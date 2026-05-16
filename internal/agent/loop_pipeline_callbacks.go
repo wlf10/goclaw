@@ -1,23 +1,3 @@
-package agent
-
-import (
-	"context"
-	"strings"
-	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/nextlevelbuilder/goclaw/internal/bootstrap"
-	"github.com/nextlevelbuilder/goclaw/internal/config"
-	"github.com/nextlevelbuilder/goclaw/internal/i18n"
-	"github.com/nextlevelbuilder/goclaw/internal/pipeline"
-	"github.com/nextlevelbuilder/goclaw/internal/providers"
-	"github.com/nextlevelbuilder/goclaw/internal/store"
-	"github.com/nextlevelbuilder/goclaw/internal/tools"
-	"github.com/nextlevelbuilder/goclaw/internal/workspace"
-	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
-)
-
 // pipelineCallbacks creates all callback closures that capture *Loop.
 // Each callback bridges a pipeline.PipelineDeps function to an existing Loop method.
 func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCallbackSet {
@@ -25,113 +5,38 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 	emitRun := func(event AgentEvent) {
 		event.RunKind = req.RunKind
 		event.DelegationID = req.DelegationID
-		event.TeamID = req.TeamID
-		event.TeamTaskID = req.TeamTaskID
-		event.ParentAgentID = req.ParentAgentID
-		event.SenderID = req.SenderID
+		event.Iteration = bridgeRS.iteration
+		event.ToolName = bridgeRS.toolName
+		event.ToolInput = bridgeRS.toolInput
+		event.ToolResult = bridgeRS.toolResult
+		event.ToolStatus = bridgeRS.toolStatus
 		event.UserID = req.UserID
 		event.Channel = req.Channel
 		event.ChatID = req.ChatID
-		event.SessionKey = req.SessionKey
+		event.MessageID = req.MessageID
 		event.TenantID = l.tenantID
 		l.emit(event)
 	}
+
 	return pipelineCallbackSet{
-		emitRun:            emitRun,
-		injectContext:      l.makeInjectContext(req),
-		loadSessionHistory: l.makeLoadSessionHistory(),
-		resolveWorkspace:   l.makeResolveWorkspace(req),
-		loadContextFiles:   l.makeLoadContextFiles(),
-		buildMessages:      l.makeBuildMessages(),
-		enrichMedia:        l.makeEnrichMedia(req),
-		injectReminders:    l.makeInjectReminders(req),
-		buildFilteredTools: l.makeBuildFilteredTools(req),
-		callLLM:            l.makeCallLLM(req, emitRun),
-		pruneMessages:      l.makePruneMessages(),
-		sanitizeHistory:    sanitizeHistory,
-		compactMessages:    l.makeCompactMessages(req),
-		runMemoryFlush:     l.makeRunMemoryFlush(),
-		executeToolCall:    l.makeExecuteToolCall(req, bridgeRS),
-		executeToolRaw:     l.makeExecuteToolRaw(req),
-		processToolResult:  l.makeProcessToolResult(req, bridgeRS),
-		checkReadOnly:      l.makeCheckReadOnly(req, bridgeRS),
-		sanitizeContent:    SanitizeAssistantContent,
-		flushMessages:      l.makeFlushMessages(req),
-		updateMetadata:     l.makeUpdateMetadata(req),
-		bootstrapCleanup:   l.makeBootstrapCleanup(),
-		maybeSummarize:     l.maybeSummarize,
+		BuildMessages:       l.makeBuildMessages(),
+		InjectContext:       l.makeInjectContext(req),
+		LoadSessionHistory:  l.makeLoadSessionHistory(),
+		EnrichMedia:         l.makeEnrichMedia(req),
+		InjectReminders:     l.makeInjectReminders(req),
+		BuildFilteredTools:  l.makeBuildFilteredTools(req),
+		CallLLM:             l.makeCallLLM(req, emitRun),
+		CompactMessages:     l.makeCompactMessages(req),
+		RunMemoryFlush:      l.makeRunMemoryFlush(),
+		FlushMessages:       l.makeFlushMessages(req),
+		UpdateMetadata:      l.makeUpdateMetadata(req),
+		SkillPostscript:     l.makeSkillPostscript(),
 	}
 }
 
-// pipelineCallbackSet groups all typed callbacks for PipelineDeps.
-type pipelineCallbackSet struct {
-	emitRun            func(AgentEvent)
-	injectContext      func(ctx context.Context, input *pipeline.RunInput) (context.Context, error)
-	loadSessionHistory func(ctx context.Context, sessionKey string) ([]providers.Message, string)
-	resolveWorkspace   func(ctx context.Context, input *pipeline.RunInput) (*workspace.WorkspaceContext, error)
-	loadContextFiles   func(ctx context.Context, userID string) ([]bootstrap.ContextFile, bool)
-	buildMessages      func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error)
-	enrichMedia        func(ctx context.Context, state *pipeline.RunState) error
-	injectReminders    func(ctx context.Context, input *pipeline.RunInput, msgs []providers.Message) []providers.Message
-	buildFilteredTools func(state *pipeline.RunState) ([]providers.ToolDefinition, error)
-	callLLM            func(ctx context.Context, state *pipeline.RunState, req providers.ChatRequest) (*providers.ChatResponse, error)
-	pruneMessages      func(msgs []providers.Message, budget int) ([]providers.Message, pipeline.PruneStats)
-	sanitizeHistory    func(msgs []providers.Message) ([]providers.Message, int)
-	compactMessages    func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error)
-	runMemoryFlush     func(ctx context.Context, state *pipeline.RunState) error
-	executeToolCall    func(ctx context.Context, state *pipeline.RunState, tc providers.ToolCall) ([]providers.Message, error)
-	executeToolRaw     func(ctx context.Context, tc providers.ToolCall) (providers.Message, any, error)
-	processToolResult  func(ctx context.Context, state *pipeline.RunState, tc providers.ToolCall, rawMsg providers.Message, rawData any) []providers.Message
-	checkReadOnly      func(state *pipeline.RunState) (*providers.Message, bool)
-	sanitizeContent    func(string) string
-	flushMessages      func(ctx context.Context, sessionKey string, msgs []providers.Message) error
-	updateMetadata     func(ctx context.Context, sessionKey string, usage providers.Usage) error
-	bootstrapCleanup   func(ctx context.Context, state *pipeline.RunState) error
-	maybeSummarize     func(ctx context.Context, sessionKey string)
-}
-
-func (l *Loop) makeResolveWorkspace(req *RunRequest) func(ctx context.Context, input *pipeline.RunInput) (*workspace.WorkspaceContext, error) {
-	resolver := workspace.NewResolver()
-	return func(ctx context.Context, input *pipeline.RunInput) (*workspace.WorkspaceContext, error) {
-		var teamID *string
-		if input.TeamID != "" {
-			teamID = &input.TeamID
-		}
-		return resolver.Resolve(ctx, workspace.ResolveParams{
-			AgentID:   l.id,
-			AgentType: l.agentType,
-			UserID:    input.UserID,
-			ChatID:    input.ChatID,
-			TenantID:  l.tenantID.String(),
-			PeerKind:  input.PeerKind,
-			TeamID:    teamID,
-			BaseDir:   l.workspace,
-		})
-	}
-}
-
-func (l *Loop) makeLoadContextFiles() func(ctx context.Context, userID string) ([]bootstrap.ContextFile, bool) {
-	return func(ctx context.Context, userID string) ([]bootstrap.ContextFile, bool) {
-		files := l.resolveContextFiles(ctx, userID)
-		hadBootstrap := false
-		for _, f := range files {
-			if strings.HasSuffix(f.Path, "BOOTSTRAP.md") {
-				hadBootstrap = true
-				break
-			}
-		}
-		return files, hadBootstrap
-	}
-}
-
-func (l *Loop) makeBuildMessages() func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
-	return func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
-		msgs, _ := l.buildMessages(ctx, history, summary,
-			input.Message, input.ExtraSystemPrompt,
-			input.SessionKey, input.Channel, input.ChannelType,
-			input.ChatTitle, input.ChatID, input.PeerKind, input.UserID,
-			input.HistoryLimit, input.SkillFilter, input.LightContext)
-		return msgs, nil
+func (l *Loop) makeBuildMessages() func(ctx context.Context, input *pipeline.RunInput) ([]providers.Message, error) {
+	return func(ctx context.Context, input *pipeline.RunInput) ([]providers.Message, error) {
+		return l.buildMessages(ctx, input)
 	}
 }
 
@@ -185,10 +90,9 @@ func (l *Loop) makeEnrichMedia(req *RunRequest) func(ctx context.Context, state 
 	}
 }
 
-func (l *Loop) makeInjectReminders(req *RunRequest) func(ctx context.Context, input *pipeline.RunInput, msgs []providers.Message) []providers.Message {
-	return func(ctx context.Context, input *pipeline.RunInput, msgs []providers.Message) []providers.Message {
-		updated, _ := l.injectTeamTaskReminders(ctx, req, msgs)
-		return updated
+func (l *Loop) makeInjectReminders(req *RunRequest) func(ctx context.Context, input *pipeline.RunInput) {
+	return func(ctx context.Context, input *pipeline.RunInput) {
+		l.injectReminders(ctx, input)
 	}
 }
 
@@ -198,7 +102,6 @@ func (l *Loop) makeBuildFilteredTools(req *RunRequest) func(state *pipeline.RunS
 		// Servers with require_user_credentials are deferred at startup and
 		// connected per-request here with the actual user's credentials.
 		l.getUserMCPTools(state.Ctx, state.Input.UserID)
-
 		maxIter := l.maxIterations
 		if req.MaxIterations > 0 && req.MaxIterations < maxIter {
 			maxIter = req.MaxIterations
@@ -218,8 +121,9 @@ func (l *Loop) makeBuildFilteredTools(req *RunRequest) func(state *pipeline.RunS
 	}
 }
 
-func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx context.Context, state *pipeline.RunState, chatReq providers.ChatRequest) (*providers.ChatResponse, error) {
-	return func(ctx context.Context, state *pipeline.RunState, chatReq providers.ChatRequest) (*providers.ChatResponse, error) {
+func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx context.Context, state *pipeline.RunState) error {
+	return func(ctx context.Context, state *pipeline.RunState) error {
+		chatReq := state.ChatRequest
 		provider := state.Provider
 		model := state.Model
 
@@ -227,16 +131,13 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 		if chatReq.Options == nil {
 			chatReq.Options = make(map[string]any)
 		}
-		chatReq.Options[providers.OptTemperature] = config.DefaultTemperature
-		chatReq.Options[providers.OptSessionKey] = req.SessionKey
-		chatReq.Options[providers.OptAgentID] = l.agentUUID.String()
+		chatReq.Options[providers.OptProvider] = provider
+		chatReq.Options[providers.OptModel] = model
+		chatReq.Options[providers.OptFeatures] = l.features
+		chatReq.Options[providers.OptTraceID] = l.traceID
 		chatReq.Options[providers.OptUserID] = req.UserID
-		chatReq.Options[providers.OptChannel] = req.Channel
-		chatReq.Options[providers.OptChatID] = req.ChatID
-		chatReq.Options[providers.OptPeerKind] = req.PeerKind
-		chatReq.Options[providers.OptLocalKey] = req.LocalKey
-		chatReq.Options[providers.OptWorkspace] = tools.ToolWorkspaceFromCtx(ctx)
-		if tid := store.TenantIDFromContext(ctx); tid != uuid.Nil {
+
+		if tid := l.tenantID; tid != "" {
 			chatReq.Options[providers.OptTenantID] = tid.String()
 		}
 
@@ -244,13 +145,12 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 		reasoningDecision := providers.ResolveReasoningDecision(
 			provider, model,
 			l.reasoningConfig.Effort,
-			l.reasoningConfig.Fallback,
-			l.reasoningConfig.Source,
+			l.reasoningConfig.MaxTokens,
 		)
-		if effort := reasoningDecision.RequestEffort(); effort != "" {
-			chatReq.Options[providers.OptThinkingLevel] = effort
-		}
-		if reasoningDecision.StripThinking {
+		chatReq.Options[providers.OptReasoningEffort] = reasoningDecision.Effort
+		chatReq.Options[providers.OptReasoningMaxTokens] = reasoningDecision.MaxTokens
+
+		if providers.ResolveStripThinking(provider, model) {
 			chatReq.Options[providers.OptStripThinking] = true
 		}
 
@@ -260,66 +160,56 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 		if state.Model != "" {
 			opts = append(opts, withModel(state.Model))
 		}
-		if provider != nil {
-			opts = append(opts, withProvider(provider.Name()))
+		if state.Provider != "" {
+			opts = append(opts, withProvider(state.Provider))
 		}
-		spanID := l.emitLLMSpanStart(ctx, start, state.Iteration+1, chatReq.Messages, opts...)
+		emitRun(AgentEvent{Type: protocol.ChatEventLLMSpanStart, AgentID: l.id})
+		llmSpan := l.startLLMSpan("chat", opts...)
 
 		var resp *providers.ChatResponse
 		var err error
+
 		if req.Stream {
-			resp, err = provider.ChatStream(ctx, chatReq, func(chunk providers.StreamChunk) {
+			resp, err = provider.ChatStream(ctx, *chatReq, func(chunk providers.StreamChunk) {
 				if chunk.Thinking != "" {
-					emitRun(AgentEvent{
-						Type:    protocol.ChatEventThinking,
-						AgentID: l.id,
-						RunID:   req.RunID,
-						Payload: map[string]string{"content": chunk.Thinking},
-					})
+					emitRun(AgentEvent{Type: protocol.ChatEventThinking, AgentID: l.id, Content: chunk.Thinking})
 				}
 				if chunk.Content != "" {
-					emitRun(AgentEvent{
-						Type:    protocol.ChatEventChunk,
-						AgentID: l.id,
-						RunID:   req.RunID,
-						Payload: map[string]string{"content": chunk.Content},
-					})
+					emitRun(AgentEvent{Type: protocol.ChatEventContent, AgentID: l.id, Content: chunk.Content})
+				}
+				if chunk.ImageURL != "" {
+					emitRun(AgentEvent{Type: protocol.ChatEventImage, AgentID: l.id, ImageURL: chunk.ImageURL})
 				}
 			})
 		} else {
 			resp, err = provider.Chat(ctx, chatReq)
 		}
 
-		// Non-streaming: emit content events matching v2 behavior (channels need these).
+		// Non-streaming: emit content events. Strip thinking events when
+		// OptStripThinking is set (leaker models like DeepSeek-Reasoner).
+		// resp.Thinking is always preserved internally for API echoing.
 		if !req.Stream && err == nil && resp != nil {
-			if resp.Thinking != "" {
+			stripUserThinking, _ := chatReq.Options[providers.OptStripThinking].(bool)
+			if resp.Thinking != "" && !stripUserThinking {
 				emitRun(AgentEvent{
 					Type:    protocol.ChatEventThinking,
 					AgentID: l.id,
-					RunID:   req.RunID,
-					Payload: map[string]string{"content": resp.Thinking},
+					Content: resp.Thinking,
 				})
 			}
 			if resp.Content != "" {
-				emitRun(AgentEvent{
-					Type:    protocol.ChatEventChunk,
-					AgentID: l.id,
-					RunID:   req.RunID,
-					Payload: map[string]string{"content": resp.Content},
-				})
+				emitRun(AgentEvent{Type: protocol.ChatEventContent, AgentID: l.id, Content: resp.Content})
+			}
+			for _, img := range resp.Images {
+				emitRun(AgentEvent{Type: protocol.ChatEventImage, AgentID: l.id, ImageURL: img.ImageURL})
 			}
 		}
 
-		l.emitLLMSpanEnd(ctx, spanID, start, resp, err, opts...)
-		return resp, err
-	}
-}
-
-func (l *Loop) makePruneMessages() func(msgs []providers.Message, budget int) ([]providers.Message, pipeline.PruneStats) {
-	return func(msgs []providers.Message, budget int) ([]providers.Message, pipeline.PruneStats) {
-		var stats pipeline.PruneStats
-		pruned := pruneContextMessages(msgs, budget, l.contextPruningCfg, l.tokenCounter, l.model, &stats)
-		return pruned, stats
+		llmSpan.End()
+		state.Response = resp
+		state.Err = err
+		state.ChatRequest = chatReq
+		return nil
 	}
 }
 
@@ -362,14 +252,9 @@ func (l *Loop) markCacheTouched(sessionKey string) {
 	l.cacheTouchBySession.Store(sessionKey, time.Now())
 }
 
-func (l *Loop) makeRunMemoryFlush() func(ctx context.Context, state *pipeline.RunState) error {
-	return func(ctx context.Context, state *pipeline.RunState) error {
-		settings := ResolveMemoryFlushSettings(l.compactionCfg)
-		if settings == nil {
-			return nil
-		}
-		l.runMemoryFlush(ctx, state.Input.SessionKey, settings)
-		return nil
+func (l *Loop) makeRunMemoryFlush() func(ctx context.Context, state *pipeline.RunState) {
+	return func(ctx context.Context, state *pipeline.RunState) {
+		l.runMemoryFlush(ctx, state, l.emit, l.skillEvolve)
 	}
 }
 
@@ -381,15 +266,10 @@ func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sess
 	var userMsgFlushed bool
 	return func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
 		if !userMsgFlushed && !req.HideInput && req.Message != "" {
+			l.sessions.AddUserMessage(ctx, sessionKey, req.Message)
 			userMsgFlushed = true
-			l.sessions.AddMessage(ctx, sessionKey, providers.Message{
-				Role:    "user",
-				Content: req.Message,
-			})
 		}
-		for _, msg := range msgs {
-			l.sessions.AddMessage(ctx, sessionKey, msg)
-		}
+		l.sessions.FlushPending(ctx, sessionKey, msgs)
 		return nil
 	}
 }
@@ -411,20 +291,21 @@ func (l *Loop) makeSkillPostscript() func(ctx context.Context, content string, t
 	}
 	var sent bool
 	return func(ctx context.Context, content string, totalToolCalls int) string {
-		if sent || totalToolCalls < l.skillNudgeInterval || IsSilentReply(content) {
-			return content
+		if sent {
+			return ""
 		}
 		sent = true
-		locale := store.LocaleFromContext(ctx)
-		return content + "\n\n---\n_" + i18n.T(locale, i18n.MsgSkillNudgePostscript) + "_"
+		l.runSkillPostscript(ctx, content, totalToolCalls)
+		return ""
 	}
 }
 
-func (l *Loop) makeBootstrapCleanup() func(ctx context.Context, state *pipeline.RunState) error {
-	return func(ctx context.Context, state *pipeline.RunState) error {
-		if l.bootstrapCleanup == nil {
-			return nil
+// hasToolCalls checks if any message in the slice contains tool calls.
+func hasToolCalls(msgs []providers.Message) bool {
+	for _, msg := range msgs {
+		if len(msg.ToolCalls) > 0 {
+			return true
 		}
-		return l.bootstrapCleanup(ctx, l.agentUUID, state.Input.UserID)
 	}
+	return false
 }
