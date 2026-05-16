@@ -112,7 +112,11 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 		if parseErr {
 			hint = "[System] One or more tool call arguments were malformed (truncated JSON). Please retry with shorter content."
 		}
-		state.Messages.AppendPending(providers.Message{Role: "assistant", Content: resp.Content})
+		state.Messages.AppendPending(providers.Message{
+			Role:     "assistant",
+			Content:  resp.Content,
+			Thinking: resp.Thinking,
+		})
 		state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
 		return nil // Continue to next iteration for retry
 	}
