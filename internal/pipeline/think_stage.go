@@ -118,9 +118,9 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 		// — APIs like DeepSeek reject tool results after a user message.
 		state.Messages.AppendPending(providers.Message{Role: "user", Content: hint})
 		state.Messages.AppendPending(providers.Message{
-			Role:      "assistant",
-			Content:   resp.Content,
-			Thinking:  resp.Thinking,
+			Role:     "assistant",
+			Content:  resp.Content,
+			Thinking: resp.Thinking,
 			ToolCalls: resp.ToolCalls,
 		})
 		return nil // Continue to next iteration for retry
