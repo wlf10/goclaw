@@ -16,7 +16,7 @@ var schemaSQL string
 
 // SchemaVersion is the current SQLite schema version.
 // Bump this when adding new migration steps below.
-const SchemaVersion = 33
+const SchemaVersion = 34
 
 // migrations maps version → SQL to apply when upgrading FROM that version.
 // schema.sql always represents the LATEST full schema (for fresh DBs).
@@ -593,6 +593,9 @@ CREATE INDEX IF NOT EXISTS idx_ws_activity_ws_time     ON workstation_activity(w
 CREATE INDEX IF NOT EXISTS idx_ws_activity_tenant_time ON workstation_activity(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ws_activity_retention   ON workstation_activity(created_at);`,
 
+	// Version 33 → 34: per-agent ordered provider/model fallback config.
+	33: `ALTER TABLE agents ADD COLUMN model_fallback TEXT NOT NULL DEFAULT '{}';`,
+
 	// Version 23 → 24: vault_documents scope/ownership consistency triggers.
 	// Mirrors PG migration 000055 CHECK constraint; SQLite cannot add CHECK via
 	// ALTER TABLE so we use BEFORE INSERT + BEFORE UPDATE triggers instead.
@@ -764,8 +767,8 @@ CREATE TABLE IF NOT EXISTS tenant_hook_budget (
 );`
 
 // backfillV16 populates base_name / path_basename for rows that existed
-// before the v15 → v16 migration. Idempotent — re-running on already-filled
-// rows is a no-op thanks to the WHERE base_name = '' filter.
+// before the v15 -> v16 migration. Idempotent; re-running on already-filled
+// rows is a no-op for already-filled base_name values.
 func backfillV16(ctx context.Context, db *sql.DB) error {
 	type row struct{ id, path string }
 

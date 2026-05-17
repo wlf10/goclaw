@@ -788,6 +788,19 @@
       "shareSessionsTip": "Allow agent to access conversation sessions across all groups. When off, each user's sessions remain isolated.",
       "shareSessionsNote": "Toggling this does not migrate data — existing per-user sessions become inaccessible in shared mode."
     },
+    "modelFallback": {
+      "title": "Model Fallback",
+      "description": "Try backup provider/model pairs in priority order when the primary model is unavailable.",
+      "enabled": "Enabled",
+      "primary": "Primary",
+      "providerPlaceholder": "Select provider",
+      "modelPlaceholder": "Select or type model",
+      "add": "Add fallback",
+      "remove": "Remove fallback",
+      "reorder": "Reorder fallback",
+      "empty": "No fallback models configured.",
+      "cooldown": "Skip recently failing routes temporarily"
+    },
     "compaction": {
       "title": "Compaction",
       "description": "Context window compaction and memory flush settings",

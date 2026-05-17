@@ -35,7 +35,7 @@ const agentSelectCols = `id, agent_key, display_name, frontmatter, owner_id, pro
 	 emoji, agent_description, thinking_level, max_tokens,
 	 self_evolve, skill_evolve, skill_nudge_interval,
 	 reasoning_config, workspace_sharing, chatgpt_oauth_routing,
-	 shell_deny_groups, kg_dedup_config,
+	 model_fallback, shell_deny_groups, kg_dedup_config,
 	 agent_type, is_default, status, budget_monthly_cents, created_at, updated_at, tenant_id`
 
 func (s *SQLiteAgentStore) Create(ctx context.Context, agent *store.AgentData) error {
@@ -57,9 +57,9 @@ func (s *SQLiteAgentStore) Create(ctx context.Context, agent *store.AgentData) e
 		 emoji, agent_description, thinking_level, max_tokens,
 		 self_evolve, skill_evolve, skill_nudge_interval,
 		 reasoning_config, workspace_sharing, chatgpt_oauth_routing,
-		 shell_deny_groups, kg_dedup_config,
+		 model_fallback, shell_deny_groups, kg_dedup_config,
 		 agent_type, is_default, status, budget_monthly_cents, created_at, updated_at, tenant_id)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		agent.ID, agent.AgentKey,
 		agent.DisplayName,
 		sql.NullString{String: agent.Frontmatter, Valid: agent.Frontmatter != ""},
@@ -70,7 +70,7 @@ func (s *SQLiteAgentStore) Create(ctx context.Context, agent *store.AgentData) e
 		agent.Emoji, agent.AgentDescription, agent.ThinkingLevel, agent.MaxTokens,
 		agent.SelfEvolve, agent.SkillEvolve, agent.SkillNudgeInterval,
 		jsonOrEmpty(agent.ReasoningConfig), jsonOrEmpty(agent.WorkspaceSharing), jsonOrEmpty(agent.ChatGPTOAuthRouting),
-		jsonOrEmpty(agent.ShellDenyGroups), jsonOrEmpty(agent.KGDedupConfig),
+		jsonOrEmpty(agent.ModelFallback), jsonOrEmpty(agent.ShellDenyGroups), jsonOrEmpty(agent.KGDedupConfig),
 		agent.AgentType, agent.IsDefault, agent.Status, agent.BudgetMonthlyCents,
 		now, now, tenantID,
 	)
@@ -151,7 +151,7 @@ func (s *SQLiteAgentStore) Update(ctx context.Context, id uuid.UUID, updates map
 		}
 	}
 	// NOT NULL JSON columns: null → empty object.
-	for _, col := range []string{"other_config", "tools_config", "reasoning_config", "workspace_sharing", "chatgpt_oauth_routing", "shell_deny_groups", "kg_dedup_config"} {
+	for _, col := range []string{"other_config", "tools_config", "reasoning_config", "workspace_sharing", "chatgpt_oauth_routing", "model_fallback", "shell_deny_groups", "kg_dedup_config"} {
 		if v, ok := updates[col]; ok && v == nil {
 			updates[col] = []byte("{}")
 		}
@@ -257,7 +257,7 @@ func scanAgentRow(row agentRowScanner) (*store.AgentData, error) {
 	var d store.AgentData
 	var frontmatter sql.NullString
 	var toolsCfg, sandboxCfg, subagentsCfg, memoryCfg, compactionCfg, pruningCfg, otherCfg *[]byte
-	var reasoningCfg, wsCfg, oauthCfg, shellCfg, kgCfg *[]byte
+	var reasoningCfg, wsCfg, oauthCfg, fallbackCfg, shellCfg, kgCfg *[]byte
 	createdAt, updatedAt := scanTimePair()
 	err := row.Scan(
 		&d.ID, &d.AgentKey, &d.DisplayName, &frontmatter, &d.OwnerID, &d.Provider, &d.Model,
@@ -265,7 +265,7 @@ func scanAgentRow(row agentRowScanner) (*store.AgentData, error) {
 		&toolsCfg, &sandboxCfg, &subagentsCfg, &memoryCfg, &compactionCfg, &pruningCfg, &otherCfg,
 		&d.Emoji, &d.AgentDescription, &d.ThinkingLevel, &d.MaxTokens,
 		&d.SelfEvolve, &d.SkillEvolve, &d.SkillNudgeInterval,
-		&reasoningCfg, &wsCfg, &oauthCfg, &shellCfg, &kgCfg,
+		&reasoningCfg, &wsCfg, &oauthCfg, &fallbackCfg, &shellCfg, &kgCfg,
 		&d.AgentType, &d.IsDefault, &d.Status, &d.BudgetMonthlyCents,
 		createdAt, updatedAt, &d.TenantID,
 	)
@@ -306,6 +306,9 @@ func scanAgentRow(row agentRowScanner) (*store.AgentData, error) {
 	}
 	if oauthCfg != nil {
 		d.ChatGPTOAuthRouting = *oauthCfg
+	}
+	if fallbackCfg != nil {
+		d.ModelFallback = *fallbackCfg
 	}
 	if shellCfg != nil {
 		d.ShellDenyGroups = *shellCfg

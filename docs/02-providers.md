@@ -44,6 +44,16 @@ All HTTP-based providers (Anthropic, OpenAI-compatible, Codex) use 300-second ti
 
 ---
 
+## Agent Model Fallback
+
+Agents can define `model_fallback` as an ordered list of backup provider/model pairs. The agent's configured `provider` and `model` are always the primary route; fallback candidates are tried in UI order when the primary route returns a classifiable provider failure such as rate limit, overload, timeout, auth/billing failure, model-not-found, or unknown transport failure. Context overflow is not treated as fallback because it needs compaction, not a different model.
+
+Fallback is runtime-only and per agent. Explicit `ProviderOverride` or `ModelOverride` requests bypass the fallback wrapper so manual runs, heartbeats, or call sites that intentionally choose a model keep exact override behavior.
+
+Streaming fallback is conservative: backup models are tried only if the stream fails before any content, thinking, or image chunk is emitted.
+
+---
+
 ## 2. Supported Providers
 
 ### Six Core Provider Types

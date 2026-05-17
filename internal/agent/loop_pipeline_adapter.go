@@ -27,6 +27,10 @@ func (l *Loop) runViaPipeline(ctx context.Context, req RunRequest) (*RunResult, 
 	provider := l.provider
 	if req.ProviderOverride != nil {
 		provider = req.ProviderOverride
+	} else if req.ModelOverride != "" {
+		if fallback, ok := provider.(interface{ PrimaryProvider() providers.Provider }); ok {
+			provider = fallback.PrimaryProvider()
+		}
 	}
 
 	p := pipeline.NewDefaultPipeline(deps)

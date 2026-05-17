@@ -26,7 +26,51 @@ Significant changes, features, and fixes in reverse chronological order.
 
 ---
 
-<<<<<<< HEAD
+### CLI Credentials: per-agent env vars under Packages
+
+**Features**
+
+- Kept `CLI Credentials` as the Packages tab at `/packages?tab=cli-credentials` and preserved the legacy `/cli-credentials` redirect.
+- Removed the duplicate standalone `CLI Credentials` item from the left sidebar.
+- Added focused coverage for grant env payload semantics and routing contracts.
+
+**Security**
+
+- Nested agent-grant get/update/delete/reveal routes now verify the grant belongs to the binary ID in the URL.
+- Grant creation now validates both the CLI binary and target agent exist in the authenticated tenant before inserting.
+- Grant updates now validate env payloads before scalar writes, preventing partial state changes on 400 responses.
+- Runtime env precedence is covered: per-user env overrides per-agent grant env for duplicate keys.
+- Credentialed exec now fails closed if per-user env JSON is invalid.
+- SQLite add-column migrations for replayed schema snapshots now skip already-present columns.
+
+**Tests**
+
+- Focused backend, store compile, UI unit, and web build validation pass.
+- Live PostgreSQL validation skipped because `TEST_DATABASE_URL` is not set.
+
+---
+
+## 2026-05-16
+
+### Agents: per-agent model fallback
+
+**Features**
+
+- Added per-agent `model_fallback` config with ordered provider/model candidates.
+- Agent advanced config UI now supports enabling fallback, adding backup provider/model pairs, and drag-and-drop ordering.
+- Runtime wraps the resolved agent provider with fallback only for normal agent execution. Explicit provider/model overrides bypass the fallback chain.
+
+**Migrations**
+
+- **PG:** `000065_agent_model_fallback` adds `agents.model_fallback JSONB NOT NULL DEFAULT '{}'`.
+- **SQLite:** schema v33 to v34 adds `agents.model_fallback TEXT NOT NULL DEFAULT '{}'`.
+
+**Tests**
+
+- Focused provider, provider resolver, store tests pass. Main app builds in default and `sqliteonly` modes. Web production build passes.
+
+---
+
 ## v3.11.3 — 2026-04-26
 
 ### Fixes
@@ -176,7 +220,9 @@ Implementation is evidence-backed against the native ChatGPT Responses API event
 **Docs**
 
 - Updated `docs/02-providers.md` and `docs/18-http-api.md` to describe the two-strategy model and the compatibility migration.
-=======
+
+---
+
 ## 2026-04-21
 
 ### Webhook fixes (post-review security & idempotency hardening)
@@ -209,7 +255,6 @@ Implementation is evidence-backed against the native ChatGPT Responses API event
 - `GOCLAW_ENCRYPTION_KEY` is now **required** for webhook HMAC auth. Same key also encrypts LLM provider credentials.
 
 ---
->>>>>>> a83f4090 (fix(webhooks): address post-review findings (K1-K10))
 
 ## 2026-04-19
 

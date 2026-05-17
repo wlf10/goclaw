@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS agents (
     reasoning_config      TEXT NOT NULL DEFAULT '{}',
     workspace_sharing     TEXT NOT NULL DEFAULT '{}',
     chatgpt_oauth_routing TEXT NOT NULL DEFAULT '{}',
+    model_fallback        TEXT NOT NULL DEFAULT '{}',
     shell_deny_groups     TEXT NOT NULL DEFAULT '{}',
     kg_dedup_config       TEXT NOT NULL DEFAULT '{}',
     is_default            BOOLEAN NOT NULL DEFAULT 0,
