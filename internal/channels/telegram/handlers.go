@@ -24,6 +24,10 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		return
 	}
 
+	// Inject tenant_id from channel instance into context for tenant-scoped operations
+	// (pairing check, session lookup, etc.) before any message processing.
+	ctx = store.WithTenantID(ctx, c.TenantID())
+
 	// Proactive migration detection: group upgraded to supergroup.
 	// Must run BEFORE isServiceMessage() — migration messages have no text/media.
 	if message.MigrateToChatID != 0 {
@@ -183,9 +187,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 	// TS ref: buildTelegramGroupPeerId() in src/telegram/bot/helpers.ts.
 	localKey := chatIDStr
 	if isForum && messageThreadID > 0 {
-		localKey = fmt.Sprintf("%s:topic:%d", chatIDStr, messageThreadID)
+		[REDACTED] chatIDStr, messageThreadID)
 	} else if dmThreadID > 0 {
-		localKey = fmt.Sprintf("%s:thread:%d", chatIDStr, dmThreadID)
+		[REDACTED] chatIDStr, dmThreadID)
 	}
 
 	// Store thread ID for streaming/send use (looked up by localKey later).
@@ -345,9 +349,7 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 			if cc := c.ContactCollector(); cc != nil {
 				contactName := strings.TrimSpace(user.FirstName + " " + user.LastName)
 				cc.EnsureContact(ctx, c.Type(), c.Name(), senderID, userID, contactName, user.Username, "group", "user", "", "")
-				// Also collect group chat itself as a contact (for group permission / merge).
 				cc.EnsureContact(ctx, c.Type(), c.Name(), chatIDStr, "", message.Chat.Title, "", "group", "group", "", "")
-				// Collect forum topic as a distinct delivery target (including General).
 				if isForum && messageThreadID > 0 {
 					threadStr := fmt.Sprintf("%d", messageThreadID)
 					cc.EnsureContact(ctx, c.Type(), c.Name(), chatIDStr, "", message.Chat.Title, "", "group", "topic", threadStr, "topic")
@@ -363,8 +365,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 
 	// Strip bot's own @mention so the LLM sees clean content and does not
 	// mistake itself for another bot (cross-channel parity with Slack/Feishu).
-	// Re-check empty state: a message containing only "@botname" becomes empty
-	// after stripping, so we restore the placeholder used for originally-empty inbounds.
 	content = stripBotMention(content, c.bot.Username())
 	if content == "" {
 		content = "[empty message]"
@@ -390,17 +390,13 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 	}
 
 	// --- Media download (only when bot will process the message) ---
-	// Deferred until after mention + pairing gates to avoid downloading
-	// media for messages that only get recorded in pending history.
 	mediaList, mediaErrors := c.resolveMedia(ctx, message)
 	if message.ReplyToMessage != nil {
 		replyMedia, replyErrors := c.resolveMedia(ctx, message.ReplyToMessage)
 		if len(replyMedia) > 0 {
-			// Tag reply media so LLM knows which images came from the replied-to message.
 			for i := range replyMedia {
 				replyMedia[i].FromReply = true
 			}
-			// Reply media first (context), current media second.
 			mediaList = append(replyMedia, mediaList...)
 			slog.Debug("telegram: resolved media from replied message",
 				"reply_msg_id", message.ReplyToMessage.MessageID,
@@ -444,8 +440,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 						extraContent += "\n\n" + docContent
 					}
 				}
-			case "video", "animation":
-				// Handled by read_video tool via MediaRef pipeline.
 			}
 			if m.FilePath != "" {
 				mediaFiles = append(mediaFiles, bus.MediaFile{
@@ -456,7 +450,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 			}
 		}
 
-		// Replace lightweight media tags with full tags (includes transcripts).
 		fullTags := buildMediaTags(mediaList)
 		lightTags := lightweightMediaTags(message)
 		if lightTags != "" && fullTags != "" {
@@ -473,9 +466,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		}
 	}
 
-	// Annotate content + notify user for any media download failures.
-	// Replace the per-type lightweight tag with an error-annotated version so the
-	// model knows the specific media was skipped and why.
 	if len(mediaErrors) > 0 {
 		for _, me := range mediaErrors {
 			errTag := fmt.Sprintf("[sent media (%s) — skipped: %s]", me.Type, me.Reason)
@@ -485,8 +475,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 				content = errTag + "\n" + content
 			}
 		}
-
-		// Send a short reply so the user knows their file was skipped.
 		for _, me := range mediaErrors {
 			var errText string
 			if me.MaxBytes > 0 {
@@ -504,13 +492,10 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		"preview", channels.Truncate(content, 50),
 	)
 
-	// Build context from pending group history (if any).
-	// Annotate current message with sender name so LLM knows who is talking.
 	finalContent := content
 	if isGroup {
 		annotated := fmt.Sprintf("[From: %s]\n%s", senderLabel, content)
 		if c.HistoryLimit() > 0 {
-			// Resolve deferred media from history entries (lazy download).
 			if histRefs := c.GroupHistory().CollectMediaRefs(localKey); len(histRefs) > 0 {
 				histMedia, histErrors := c.resolveMediaRefs(ctx, histRefs)
 				for _, m := range histMedia {
@@ -534,13 +519,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 			finalContent = annotated
 		}
 	} else {
-		// DM: annotate with sender identity so the agent knows who is messaging.
 		finalContent = fmt.Sprintf("[From: %s]\n%s", senderLabel, content)
 	}
 
-	// Send typing indicator with keepalive + TTL safety net.
-	// Telegram typing expires after 5s, so keepalive every 4s.
-	// TTL auto-stops after 60s to prevent stuck indicators.
 	chatIDObj := tu.ID(chatID)
 	typingCtrl := typing.New(typing.Options{
 		MaxDuration:       60 * time.Second,
@@ -553,28 +534,19 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 			return c.bot.SendChatAction(ctx, action)
 		},
 	})
-	// Stop previous typing controller for this chat/topic (if any)
 	if prev, ok := c.typingCtrls.Load(localKey); ok {
 		prev.(*typing.Controller).Stop()
 	}
 	c.typingCtrls.Store(localKey, typingCtrl)
 	typingCtrl.Start()
 
-	// Stop previous thinking animation for this chat/topic
 	if prevStop, ok := c.stopThinking.Load(localKey); ok {
 		if cf, ok := prevStop.(*thinkingCancel); ok {
 			cf.Cancel()
 		}
 	}
-
-	// Create thinking cancel for this chat/topic
 	_, thinkCancel := context.WithCancel(ctx)
 	c.stopThinking.Store(localKey, &thinkingCancel{fn: thinkCancel})
-
-	// No "Thinking..." placeholder — the DraftStream creates its own message
-	// on the first streaming chunk (sendMessage on first flush).
-	// This avoids "reply to deleted message" artifacts and is cleaner UX:
-	// user sees typing indicator → first content appears directly.
 
 	metadata := map[string]string{
 		"message_id": fmt.Sprintf("%d", message.MessageID),
@@ -595,8 +567,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		metadata[tools.MetaDMThreadID] = fmt.Sprintf("%d", dmThreadID)
 		metadata[tools.MetaMessageThreadID] = fmt.Sprintf("%d", dmThreadID)
 	}
-	// Self-identity hint so the LLM knows its own Telegram handle and does not
-	// confuse other bots' @mentions (preserved after stripBotMention) for its own.
 	if identity := buildSelfIdentityPrompt(c.bot.Username(), c.botDisplayName); identity != "" {
 		metadata[tools.MetaChannelSelfIdentity] = identity
 	}
@@ -613,9 +583,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		peerKind = "group"
 	}
 
-	// Audio-aware routing: if a voice/audio message was received and a dedicated speaking agent
-	// is configured, route to that agent instead of the default channel agent.
-	// This prevents voice turns from landing on a text-router agent that cannot handle audio.
 	targetAgentID := c.AgentID()
 	if c.config.VoiceAgentID != "" {
 		for _, m := range mediaList {
@@ -629,14 +596,11 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		}
 	}
 
-	// Collect contact for processed messages (DM + group-mentioned).
 	if cc := c.ContactCollector(); cc != nil {
 		contactName := strings.TrimSpace(user.FirstName + " " + user.LastName)
 		cc.EnsureContact(ctx, c.Type(), c.Name(), senderID, userID, contactName, user.Username, peerKind, "user", "", "")
-		// Also collect group chat itself as a contact (for group permission / merge).
 		if isGroup {
 			cc.EnsureContact(ctx, c.Type(), c.Name(), chatIDStr, "", message.Chat.Title, "", "group", "group", "", "")
-			// Collect forum topic as a distinct delivery target (including General).
 			if isForum && messageThreadID > 0 {
 				threadStr := fmt.Sprintf("%d", messageThreadID)
 				cc.EnsureContact(ctx, c.Type(), c.Name(), chatIDStr, "", message.Chat.Title, "", "group", "topic", threadStr, "topic")
@@ -659,7 +623,6 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 		Metadata:     metadata,
 	})
 
-	// Clear pending history after sending to agent.
 	if isGroup {
 		c.GroupHistory().Clear(localKey)
 	}
