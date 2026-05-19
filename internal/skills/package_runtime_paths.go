@@ -34,6 +34,41 @@ func npmGlobalBinDir() string {
 	return filepath.Join(npmGlobalPrefix(), "bin")
 }
 
+func RuntimeExecutableDirs() []string {
+	return uniqueNonEmptyPaths(
+		filepath.Join(packageRuntimeDir(), "bin"),
+		npmGlobalBinDir(),
+		filepath.Join(packageRuntimeDir(), "pip", "bin"),
+	)
+}
+
+func FindRuntimeExecutable(name string) (string, bool) {
+	if strings.ContainsAny(name, `/\`) {
+		return "", false
+	}
+	for _, dir := range RuntimeExecutableDirs() {
+		path := filepath.Join(dir, name)
+		if IsExecutableFile(path) {
+			return path, true
+		}
+	}
+	if path, ok := findNpmPackageExecutableAlias(name); ok {
+		return path, true
+	}
+	return "", false
+}
+
+func IsExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode().Perm()&0111 != 0
+}
+
 func npmGlobalNodePath() string {
 	return filepath.Join(npmGlobalPrefix(), "lib", "node_modules")
 }
@@ -91,4 +126,18 @@ func prependPathValue(current, dir string) string {
 		return dir
 	}
 	return dir + string(os.PathListSeparator) + current
+}
+
+func uniqueNonEmptyPaths(paths ...string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
 }

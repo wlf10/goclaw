@@ -33,6 +33,13 @@ All notable changes to GoClaw are documented here. For full documentation, see [
   now prefer `gpt-5.5`, with reasoning metadata and context-window defaults updated
   for provider-first model selection.
 
+### Fixed
+
+- **SecureCLI runtime npm binaries** — binary discovery and credentialed exec now
+  resolve tools installed under the GoClaw runtime directories, including
+  `{runtimeDir}/npm-global/bin`, and support single-binary npm package aliases
+  such as `openrouter-cli` exposing `orc`.
+
 ### Breaking Changes
 
 - **Context pruning now opt-in.** Previously tool-result trimming ran by default

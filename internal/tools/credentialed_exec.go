@@ -21,6 +21,7 @@ import (
 	shellwords "github.com/mattn/go-shellwords"
 
 	"github.com/nextlevelbuilder/goclaw/internal/sandbox"
+	"github.com/nextlevelbuilder/goclaw/internal/skills"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
@@ -263,16 +264,32 @@ func detectShellOperators(command string) []string {
 }
 
 // resolveAndMatchBinary resolves a binary name to an absolute path and
-// optionally verifies it matches the stored config path. This prevents
-// binary spoofing (e.g. ./gh in workspace instead of /usr/bin/gh).
+// verifies any stored path matches either the command binary or a known runtime
+// package alias (for example openrouter-cli -> orc).
 func resolveAndMatchBinary(binaryName string, configPath *string) (string, error) {
+	if configPath != nil && strings.TrimSpace(*configPath) != "" {
+		expectedPath := strings.TrimSpace(*configPath)
+		if !filepath.IsAbs(expectedPath) {
+			return "", fmt.Errorf("configured binary path must be absolute: %q", expectedPath)
+		}
+		if !skills.IsExecutableFile(expectedPath) {
+			return "", fmt.Errorf("configured binary path %q is not executable", expectedPath)
+		}
+		if normalizeBinaryName(expectedPath) == normalizeBinaryName(binaryName) {
+			return expectedPath, nil
+		}
+		if runtimePath, ok := skills.FindRuntimeExecutable(binaryName); ok && runtimePath == expectedPath {
+			return expectedPath, nil
+		}
+		return "", fmt.Errorf("binary path mismatch: command uses %q but config expects %q", binaryName, expectedPath)
+	}
+
 	absPath, err := exec.LookPath(binaryName)
 	if err != nil {
+		if runtimePath, ok := skills.FindRuntimeExecutable(binaryName); ok {
+			return runtimePath, nil
+		}
 		return "", fmt.Errorf("binary %q not found in PATH: %w", binaryName, err)
-	}
-	// If config specifies an absolute path, verify it matches
-	if configPath != nil && *configPath != "" && absPath != *configPath {
-		return "", fmt.Errorf("binary path mismatch: resolved %q but config expects %q", absPath, *configPath)
 	}
 	return absPath, nil
 }
