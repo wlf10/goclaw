@@ -14,6 +14,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/typing"
+        "github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 )
 
@@ -23,6 +24,8 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 	if message == nil {
 		return
 	}
+
+        ctx = store.WithTenantID(ctx, c.TenantID())
 
 	// Proactive migration detection: group upgraded to supergroup.
 	// Must run BEFORE isServiceMessage() — migration messages have no text/media.
@@ -184,7 +187,7 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 	localKey := chatIDStr
 	if isForum && messageThreadID > 0 {
 		localKey = fmt.Sprintf("%s:topic:%d", chatIDStr, messageThreadID)
-	} else if dmThreadID > 0 {
+        } else if dmThreadID > 0 {
 		localKey = fmt.Sprintf("%s:thread:%d", chatIDStr, dmThreadID)
 	}
 
