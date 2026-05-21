@@ -240,6 +240,15 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *Resul
 }
 
 func (t *WriteFileTool) executeInSandbox(ctx context.Context, path, content, sandboxKey string, deliver, appendMode bool) *Result {
+	// Validate path against allowed prefixes before writing to sandbox.
+	// Matches the main execution path in Execute().
+	wsp := ToolWorkspaceFromCtx(ctx)
+	if wsp == "" {
+		wsp = t.workspace
+	}
+	if _, err := resolvePathWithAllowed(path, wsp, effectiveRestrict(ctx, t.restrict), allowedWriteWithTeamWorkspace(ctx, t.allowedPrefixes)); err != nil {
+		return ErrorResult(err.Error())
+	}
 	bridge, err := t.getFsBridge(ctx, sandboxKey)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("sandbox error: %v", err))
