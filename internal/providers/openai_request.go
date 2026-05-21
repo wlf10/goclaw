@@ -19,7 +19,9 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 	supportsThoughtSignature := strings.Contains(strings.ToLower(p.providerType), "gemini") ||
 		strings.Contains(strings.ToLower(p.name), "gemini") ||
 		strings.Contains(strings.ToLower(p.apiBase), "generativelanguage") ||
-		strings.Contains(strings.ToLower(model), "gemini")
+		strings.Contains(strings.ToLower(model), "gemini") ||
+		strings.ToLower(p.providerType) == "vertex" ||
+		strings.Contains(strings.ToLower(p.apiBase), "aiplatform")
 
 	if supportsThoughtSignature {
 		inputMessages = collapseToolCallsWithoutSig(inputMessages)
@@ -186,7 +188,7 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 	if v, ok := req.Options[OptTemperature]; ok {
 		// Certain model families don't support custom temperature (locked to default).
 		// This is a model-level constraint, not provider-specific — applies to both OpenAI and Azure.
-		// Note: gpt-5.X flagship models (gpt-5.1, gpt-5.4) DO support temperature;
+		// Note: gpt-5.X flagship models (gpt-5.1, gpt-5.4, gpt-5.5) DO support temperature;
 		// only the mini/nano reasoning variants reject it.
 		skipTemp := strings.HasPrefix(capabilityModel, "gpt-5-mini") || strings.HasPrefix(capabilityModel, "gpt-5-nano") || strings.HasPrefix(capabilityModel, "o1") || strings.HasPrefix(capabilityModel, "o3") || strings.HasPrefix(capabilityModel, "o4")
 		if !skipTemp {

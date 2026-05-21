@@ -148,7 +148,7 @@ can override or inherit routing behavior while keeping the main `provider` field
 ```json
 {
   "provider": "openai-codex",
-  "model": "gpt-5.4",
+  "model": "gpt-5.5",
   "chatgpt_oauth_routing": {
     "override_mode": "custom",
     "strategy": "round_robin"
@@ -214,7 +214,7 @@ Agents can now store capability-aware GPT-5/Codex reasoning intent under top-lev
 ```json
 {
   "provider": "openai-codex",
-  "model": "gpt-5.4",
+  "model": "gpt-5.5",
   "reasoning_config": {
     "override_mode": "inherit"
   }
@@ -364,11 +364,11 @@ Example response:
 {
   "models": [
     {
-      "id": "gpt-5.4",
-      "name": "GPT-5.4",
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
       "reasoning": {
         "levels": ["none", "low", "medium", "high", "xhigh"],
-        "default_effort": "none"
+        "default_effort": "medium"
       }
     },
     {
@@ -978,7 +978,7 @@ Team activity and audit trail.
 
 ## 20. Secure CLI Credentials
 
-CLI authentication credentials for secure command execution. Requires **admin role** (full gateway token or empty gateway token in dev/single-user mode).
+CLI authentication credentials for secure command execution. Requires **admin role** (gateway token or empty-token local/dev fallback).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -1014,7 +1014,7 @@ CLI authentication credentials for secure command execution. Requires **admin ro
 
 ## 21. Runtime & Packages Management
 
-Manage system (apk), Python (pip), and Node (npm) package installation in the GoClaw runtime container. These endpoints do not inspect host-level runtimes. Requires authentication. When `GOCLAW_GATEWAY_TOKEN` is empty (dev/single-user mode), all users get admin role and can manage packages.
+Manage system (apk), Python (pip), and Node (npm) package installation in the GoClaw runtime container. These endpoints do not inspect host-level runtimes. Requires authentication. Empty-token admin access is limited to loopback local development or explicit `GOCLAW_ALLOW_INSECURE_NO_AUTH=1`; external binds require `GOCLAW_GATEWAY_TOKEN`.
 
 ### List Installed Packages
 
@@ -1178,7 +1178,7 @@ Workspace file management.
 | `GET` | `/v1/storage/files` | List files with depth limiting |
 | `GET` | `/v1/storage/files/{path...}` | Read file (JSON or raw) |
 | `POST` | `/v1/storage/files` | Upload file (admin) |
-| `DELETE` | `/v1/storage/files/{path...}` | Delete file/directory |
+| `DELETE` | `/v1/storage/files/{path...}` | Delete file/directory (admin) |
 | `PUT` | `/v1/storage/move` | Move/rename file (admin) |
 | `GET` | `/v1/storage/size` | Stream storage size (Server-Sent Events, cached 60 min) |
 

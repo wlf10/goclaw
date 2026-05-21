@@ -11,11 +11,51 @@
     "description": "Description",
     "source": "Source",
     "author": "Author",
+    "agents": "Agents",
+    "owner": "Owner",
     "visibility": "Visibility",
     "status": "Status",
     "actions": "Actions"
   },
   "noDescription": "No description",
+  "owner": "Owner",
+  "unknownOwner": "Unknown",
+  "grants": {
+    "title": "Agent access for {{name}}",
+    "manage": "Manage agent access",
+    "current": "Current agent grants",
+    "none": "No agent grants yet.",
+    "add": "Add grant",
+    "update": "Update grant",
+    "grant": "Grant",
+    "save": "Save",
+    "revoke": "Revoke grant",
+    "selectAgent": "Select agent",
+    "allowManage": "Allow this agent to edit or delete the skill",
+    "canManage": "Can edit",
+    "grantAllAgents": "Grant all agents",
+    "grantAllPartial": "{{count}} agent grant(s) failed",
+    "loadFailed": "Failed to load grants",
+    "saveFailed": "Failed to save grant",
+    "revokeFailed": "Failed to revoke grant"
+  },
+  "bulk": {
+    "selected": "{{count}} selected",
+    "selectSkill": "Select {{name}}",
+    "selectPage": "Select visible skills",
+    "enable": "Enable",
+    "disable": "Disable",
+    "grantAllAgents": "Grant all agents",
+    "delete": "Delete",
+    "clear": "Clear",
+    "enabled": "Enabled {{count}} skill(s)",
+    "disabled": "Disabled {{count}} skill(s)",
+    "grantedAllAgents": "Granted all agents to {{count}} skill(s)",
+    "deleted": "Deleted {{count}} skill(s)",
+    "failed": "Bulk action failed",
+    "deleteTitle": "Delete selected skills",
+    "deleteDescription": "This will delete {{count}} selected custom skill(s). Type DELETE to confirm."
+  },
   "visibility": {
     "clickToCycle": "Click to change visibility"
   },
@@ -52,7 +92,12 @@
     "skillUnchanged": "Content unchanged — skipped",
     "slugConflict": "Slug conflicts with a system skill",
     "unchanged": "Unchanged",
-    "new": "New"
+    "new": "New",
+    "agentManagers": "Grant manager access to agents",
+    "managerAgentsHelp": "Selected current agents can update this skill later.",
+    "selectAllAgents": "Select all agents",
+    "clearAgents": "Clear agents",
+    "noAgents": "No agents available"
   },
   "edit": {
     "title": "Edit Skill",
@@ -92,6 +137,7 @@
     "rescanSuccess": "Updated {{count}} skills",
     "missing": "Missing: {{deps}}",
     "install": "Install Dependencies",
+    "installAll": "Install all dependencies",
     "installing": "Installing...",
     "installSuccess": "Dependencies installed successfully",
     "installPartial": "Some dependencies failed to install",
@@ -108,6 +154,10 @@
     "runtimeMissingDesc": "Core skills require Python and/or Node.js runtimes inside the GoClaw runtime container. Host-installed runtimes are not used here. If you are using the published latest image, missing runtimes can be expected there.",
     "runtimeMissingAction": "Open Packages to verify or install runtimes in this container.",
     "runtimeRequired": "Install container runtimes first"
+  },
+  "agents": {
+    "creator": "Creator",
+    "managers": "Managers"
   },
   "detail": {
     "title": "Skill Detail",

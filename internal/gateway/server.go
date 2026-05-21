@@ -21,11 +21,11 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	httpapi "github.com/nextlevelbuilder/goclaw/internal/http"
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
-	"github.com/nextlevelbuilder/goclaw/internal/webui"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
+	"github.com/nextlevelbuilder/goclaw/internal/webui"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
@@ -50,21 +50,21 @@ type Server struct {
 	// Non-handler dependencies (don't implement RegisterRoutes)
 	policyEngine   *permissions.PolicyEngine
 	pairingService store.PairingStore
-	apiKeyStore    store.APIKeyStore  // for API key auth lookup
-	agentStore     store.AgentStore   // for context injection in tools_invoke
-	msgBus         *bus.MessageBus    // for MCP bridge media delivery
+	apiKeyStore    store.APIKeyStore // for API key auth lookup
+	agentStore     store.AgentStore  // for context injection in tools_invoke
+	msgBus         *bus.MessageBus   // for MCP bridge media delivery
 
 	upgrader    websocket.Upgrader
 	rateLimiter *RateLimiter
 	clients     map[string]*Client
 	mu          sync.RWMutex
 
-	startedAt      time.Time
-	version        string
-	db             interface{ PingContext(context.Context) error } // for health check DB ping
-	updateChecker  *UpdateChecker
+	startedAt     time.Time
+	version       string
+	db            interface{ PingContext(context.Context) error } // for health check DB ping
+	updateChecker *UpdateChecker
 
-	logTee   *LogTee                  // optional; auto-unsubscribes clients on disconnect
+	logTee   *LogTee                 // optional; auto-unsubscribes clients on disconnect
 	postTurn tools.PostTurnProcessor // optional; for team task dispatch in HTTP API paths
 
 	httpServer *http.Server
@@ -464,11 +464,34 @@ func (s *Server) SetPackagesHandler(h *httpapi.PackagesHandler) {
 	s.handlers = append(s.handlers, h)
 }
 
+// SetGatewayUpgradeHandler sets the host-local gateway upgrade trigger handler.
+func (s *Server) SetGatewayUpgradeHandler(h *httpapi.GatewayUpgradeHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
 // SetOAuthHandler sets the OAuth handler (available in all modes).
 func (s *Server) SetOAuthHandler(h *httpapi.OAuthHandler) { s.handlers = append(s.handlers, h) }
 
 // SetAPIKeysHandler sets the API key management handler.
 func (s *Server) SetAPIKeysHandler(h *httpapi.APIKeysHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
+// SetWebhooksAdminHandler registers the webhook admin CRUD handler.
+func (s *Server) SetWebhooksAdminHandler(h *httpapi.WebhooksAdminHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
+// SetWebhookMessageHandler registers the POST /v1/webhooks/message runtime handler.
+// Only called when edition.Current().AllowsChannels() is true (Standard edition).
+func (s *Server) SetWebhookMessageHandler(h *httpapi.WebhookMessageHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
+// SetWebhookLLMHandler registers the POST /v1/webhooks/llm runtime handler.
+// Available in all editions (Standard + Lite). Localhost-only enforcement is
+// handled by WebhookAuthMiddleware at request time via webhook.LocalhostOnly.
+func (s *Server) SetWebhookLLMHandler(h *httpapi.WebhookLLMHandler) {
 	s.handlers = append(s.handlers, h)
 }
 
@@ -575,6 +598,11 @@ func (s *Server) SetAgentStore(as store.AgentStore) { s.agentStore = as }
 
 // SetMessageBus sets the message bus for MCP bridge media delivery.
 func (s *Server) SetMessageBus(mb *bus.MessageBus) { s.msgBus = mb }
+
+// SetWorkstationsHandler sets the workstations CRUD handler (Standard edition only).
+func (s *Server) SetWorkstationsHandler(h *httpapi.WorkstationsHandler) {
+	s.handlers = append(s.handlers, h)
+}
 
 // SetVersion sets the server version for health responses.
 func (s *Server) SetVersion(v string) { s.version = v }

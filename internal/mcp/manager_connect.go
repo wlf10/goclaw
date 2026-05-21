@@ -56,6 +56,7 @@ func connectAndDiscover(ctx context.Context, name, transportType, command string
 			}
 		}
 		if _, err := client.Initialize(ctx, initReq); err == nil {
+			initErr = nil
 			break
 		} else {
 			initErr = err

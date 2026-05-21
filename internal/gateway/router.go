@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nextlevelbuilder/goclaw/internal/cache"
+	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/edition"
 	httpapi "github.com/nextlevelbuilder/goclaw/internal/http"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
@@ -233,7 +234,7 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 	}
 
 	// Path 2: No token configured → operator (backward compat)
-	if configToken == "" {
+	if configToken == "" && config.GatewayNoAuthFallbackAllowed(r.server.cfg.Gateway) {
 		client.role = permissions.RoleOperator
 		client.authenticated = true
 		client.userID = params.UserID
@@ -260,7 +261,7 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 		if paired {
 			client.role = permissions.RoleOperator
 			client.authenticated = true
-		client.userID = params.UserID
+			client.userID = params.UserID
 			client.pairedSenderID = params.SenderID
 			client.pairedChannel = "browser"
 			tid, errCode := r.resolveTenantHint(ctx, params.TenantHint, params.UserID)

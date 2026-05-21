@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Zap, Pencil, Trash2 } from "lucide-react";
+import { Zap, Pencil, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -18,8 +18,11 @@ interface SkillTableRowProps {
   tab: "core" | "custom";
   hasTenantScope: boolean;
   toggling: string | null;
-  onView: (name: string) => void;
+  selected: boolean;
+  onToggleSelect: (skill: SkillInfo) => void;
+  onView: (skill: SkillInfo) => void;
   onEdit: (skill: SkillInfo) => void;
+  onManageGrants: (skill: SkillInfo) => void;
   onDelete: (skill: SkillInfo) => void;
   onToggle: (skill: SkillInfo, enabled: boolean) => void;
   onCycleVisibility: (skill: SkillInfo) => void;
@@ -29,8 +32,8 @@ interface SkillTableRowProps {
 
 /** Single row in the skills table with inline status, visibility, and action controls. */
 export function SkillTableRow({
-  skill, tab, hasTenantScope, toggling,
-  onView, onEdit, onDelete, onToggle, onCycleVisibility,
+  skill, tab, hasTenantScope, toggling, selected, onToggleSelect,
+  onView, onEdit, onManageGrants, onDelete, onToggle, onCycleVisibility,
   onSetTenantConfig, onDeleteTenantConfig,
 }: SkillTableRowProps) {
   const { t } = useTranslation("skills");
@@ -39,14 +42,25 @@ export function SkillTableRow({
   const hasMissing = (skill.missing_deps?.length ?? 0) > 0;
 
   return (
-    <tr className={cn("border-b last:border-0 hover:bg-muted/30", (isArchived || isDisabled) && "opacity-60")}>
+    <tr className={cn("border-b last:border-0 hover:bg-muted/30", selected && "bg-primary/5", (isArchived || isDisabled) && "opacity-60")}>
+      <td className="px-4 py-3">
+        {skill.id && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(skill)}
+            aria-label={t("bulk.selectSkill", { name: skill.name })}
+            className="h-4 w-4 cursor-pointer accent-primary"
+          />
+        )}
+      </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
           <Zap className="h-4 w-4 text-muted-foreground shrink-0" />
           <button
             type="button"
             className="font-medium text-left hover:underline cursor-pointer"
-            onClick={() => onView(skill.name)}
+            onClick={() => onView(skill)}
           >
             {skill.name}
           </button>
@@ -62,7 +76,23 @@ export function SkillTableRow({
         {skill.description || t("noDescription")}
       </td>
       {tab === "custom" && (
-        <td className="px-4 py-3 text-sm text-muted-foreground">{skill.author || "—"}</td>
+        <td className="px-4 py-3 text-sm text-muted-foreground">
+          <div className="flex max-w-[220px] flex-col gap-1">
+            {skill.author && <span className="truncate">{skill.author}</span>}
+            {skill.creator_agent && (
+              <span className="truncate text-2xs">
+                {t("agents.creator")}: {skill.creator_agent.display_name || skill.creator_agent.agent_key || skill.creator_agent.id}
+              </span>
+            )}
+            {skill.manager_agents && skill.manager_agents.length > 0 ? (
+              <span className="truncate text-2xs">
+                {t("agents.managers")}: {skill.manager_agents.map((agent) => agent.display_name || agent.agent_key || agent.id).join(", ")}
+              </span>
+            ) : !skill.author && !skill.creator_agent ? (
+              <span>—</span>
+            ) : null}
+          </div>
+        </td>
       )}
       <td className="px-4 py-3">
         <div className="flex flex-col gap-1">
@@ -132,6 +162,11 @@ export function SkillTableRow({
               <Button variant="ghost" size="sm" onClick={() => onEdit(skill)} className="gap-1">
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
+              {!skill.is_system && (
+                <Button variant="ghost" size="sm" onClick={() => onManageGrants(skill)} className="gap-1" title={t("grants.manage")}>
+                  <Users className="h-3.5 w-3.5" />
+                </Button>
+              )}
               {!skill.is_system && (
                 <Button
                   variant="ghost" size="sm"

@@ -212,6 +212,7 @@ func isAdminMethod(method string) bool {
 		protocol.MethodConfigSchema,
 		protocol.MethodConfigDefaults,
 		protocol.MethodConfigPermissionsList,
+		protocol.MethodConfigPermissionsCheck,
 		protocol.MethodConfigPermissionsGrant,
 		protocol.MethodConfigPermissionsRevoke,
 
@@ -280,6 +281,17 @@ func isAdminMethod(method string) bool {
 		protocol.MethodTTSEnable,
 		protocol.MethodTTSDisable,
 		protocol.MethodTTSSetProvider,
+
+		// Workstations — credentials + remote exec; create/update/delete and
+		// agent linking + permission mutations are admin-only.
+		protocol.MethodWorkstationsCreate,
+		protocol.MethodWorkstationsUpdate,
+		protocol.MethodWorkstationsDelete,
+		protocol.MethodWorkstationsLinkAgent,
+		protocol.MethodWorkstationsUnlinkAgent,
+		protocol.MethodWorkstationsPermAdd,
+		protocol.MethodWorkstationsPermRemove,
+		protocol.MethodWorkstationsPermToggle,
 	}
 	return slices.Contains(adminMethods, method)
 }
@@ -320,6 +332,9 @@ func isWriteMethod(method string) bool {
 		// Channel pairing starts (QR scan flows).
 		protocol.MethodZaloPersonalQRStart,
 		protocol.MethodWhatsAppQRStart,
+
+		// Workstations — connection test invokes SSH side-effects.
+		protocol.MethodWorkstationsTest,
 	}
 	return slices.Contains(writeExact, method)
 }
@@ -415,6 +430,12 @@ func isReadMethod(method string) bool {
 
 		// Zalo personal contacts listing
 		protocol.MethodZaloPersonalContacts,
+
+		// Workstations read
+		protocol.MethodWorkstationsList,
+		protocol.MethodWorkstationsGet,
+		protocol.MethodWorkstationsPermList,
+		protocol.MethodWorkstationsListActivity,
 	}
 	return slices.Contains(readMethods, method)
 }
