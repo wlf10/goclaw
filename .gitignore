@@ -1,5 +1,6 @@
 # Test artifacts
 tests/integration/testdata/
+backup/
 
 # Binary
 openclaw-go

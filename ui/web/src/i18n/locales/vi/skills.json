@@ -11,9 +11,11 @@
     "description": "Mô tả",
     "source": "Nguồn",
     "author": "Tác giả",
+    "agents": "Agents",
     "visibility": "Hiển thị",
     "status": "Trạng thái",
-    "actions": "Thao tác"
+    "actions": "Thao tác",
+    "owner": "Chủ sở hữu"
   },
   "noDescription": "Không có mô tả",
   "visibility": {
@@ -52,7 +54,12 @@
     "skillUnchanged": "Nội dung không đổi — đã bỏ qua",
     "slugConflict": "Slug trùng với kỹ năng hệ thống",
     "unchanged": "Không đổi",
-    "new": "Mới"
+    "new": "Mới",
+    "agentManagers": "Cấp quyền quản lý cho agents",
+    "managerAgentsHelp": "Các agent hiện tại được chọn có thể cập nhật skill này sau.",
+    "selectAllAgents": "Chọn tất cả agents",
+    "clearAgents": "Bỏ chọn agents",
+    "noAgents": "Chưa có agent"
   },
   "edit": {
     "title": "Chỉnh sửa skill",
@@ -92,6 +99,7 @@
     "rescanSuccess": "Updated {{count}} skills",
     "missing": "Missing: {{deps}}",
     "install": "Install Dependencies",
+    "installAll": "Install all dependencies",
     "installing": "Installing...",
     "installSuccess": "Dependencies installed",
     "installPartial": "Some dependencies failed",
@@ -109,6 +117,10 @@
     "runtimeMissingAction": "Mở trang Packages để kiểm tra hoặc cài runtime trong container này.",
     "runtimeRequired": "Hãy cài runtime trong container trước"
   },
+  "agents": {
+    "creator": "Agent tạo",
+    "managers": "Agent quản lý"
+  },
   "detail": {
     "title": "Chi tiết skill",
     "content": "Nội dung",
@@ -125,5 +137,43 @@
     "rescanUpdated": "Đã cập nhật {{count}} skill",
     "rescanNoChanges": "Tất cả skill đã cập nhật",
     "rescanFailed": "Không thể quét lại dependencies"
+  },
+  "owner": "Chủ sở hữu",
+  "unknownOwner": "Không rõ",
+  "grants": {
+    "title": "Quyền agent cho {{name}}",
+    "manage": "Quản lý quyền agent",
+    "current": "Grant agent hiện tại",
+    "none": "Chưa có grant agent.",
+    "add": "Thêm grant",
+    "update": "Cập nhật grant",
+    "grant": "Grant",
+    "save": "Lưu",
+    "revoke": "Thu hồi grant",
+    "selectAgent": "Chọn agent",
+    "allowManage": "Cho phép agent này sửa hoặc xóa skill",
+    "canManage": "Được sửa",
+    "grantAllAgents": "Grant tất cả agents",
+    "grantAllPartial": "{{count}} grant agent thất bại",
+    "loadFailed": "Không thể tải grant",
+    "saveFailed": "Không thể lưu grant",
+    "revokeFailed": "Không thể thu hồi grant"
+  },
+  "bulk": {
+    "selected": "Đã chọn {{count}}",
+    "selectSkill": "Chọn {{name}}",
+    "selectPage": "Chọn skill đang hiển thị",
+    "enable": "Bật",
+    "disable": "Tắt",
+    "grantAllAgents": "Grant tất cả agents",
+    "delete": "Xóa",
+    "clear": "Bỏ chọn",
+    "enabled": "Đã bật {{count}} skill",
+    "disabled": "Đã tắt {{count}} skill",
+    "grantedAllAgents": "Đã grant tất cả agents cho {{count}} skill",
+    "deleted": "Đã xóa {{count}} skill",
+    "failed": "Bulk action thất bại",
+    "deleteTitle": "Xóa các skill đã chọn",
+    "deleteDescription": "Thao tác này sẽ xóa {{count}} custom skill đã chọn. Gõ DELETE để xác nhận."
   }
 }

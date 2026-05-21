@@ -11,9 +11,11 @@
     "description": "描述",
     "source": "来源",
     "author": "作者",
+    "agents": "Agent",
     "visibility": "可见性",
     "status": "状态",
-    "actions": "操作"
+    "actions": "操作",
+    "owner": "所有者"
   },
   "noDescription": "暂无描述",
   "visibility": {
@@ -52,7 +54,12 @@
     "skillUnchanged": "内容未更改 — 已跳过",
     "slugConflict": "Slug 与系统技能冲突",
     "unchanged": "未更改",
-    "new": "新建"
+    "new": "新建",
+    "agentManagers": "授予 Agent 管理权限",
+    "managerAgentsHelp": "所选当前 Agent 以后可以更新此 Skill。",
+    "selectAllAgents": "选择所有 Agent",
+    "clearAgents": "清除 Agent",
+    "noAgents": "暂无 Agent"
   },
   "edit": {
     "title": "编辑Skill",
@@ -92,6 +99,7 @@
     "rescanSuccess": "Updated {{count}} skills",
     "missing": "Missing: {{deps}}",
     "install": "Install Dependencies",
+    "installAll": "Install all dependencies",
     "installing": "Installing...",
     "installSuccess": "Dependencies installed",
     "installPartial": "Some dependencies failed",
@@ -109,6 +117,10 @@
     "runtimeMissingAction": "打开 Packages 页面，在此容器中检查或安装运行时。",
     "runtimeRequired": "请先安装容器内运行时"
   },
+  "agents": {
+    "creator": "创建 Agent",
+    "managers": "管理 Agent"
+  },
   "detail": {
     "title": "Skill详情",
     "content": "内容",
@@ -125,5 +137,43 @@
     "rescanUpdated": "已更新 {{count}} 个技能",
     "rescanNoChanges": "所有技能已是最新",
     "rescanFailed": "重新扫描依赖失败"
+  },
+  "owner": "所有者",
+  "unknownOwner": "未知",
+  "grants": {
+    "title": "{{name}} 的 Agent 权限",
+    "manage": "管理 Agent 权限",
+    "current": "当前 Agent 授权",
+    "none": "暂无 Agent 授权。",
+    "add": "添加授权",
+    "update": "更新授权",
+    "grant": "授权",
+    "save": "保存",
+    "revoke": "撤销授权",
+    "selectAgent": "选择 Agent",
+    "allowManage": "允许此 Agent 编辑或删除 Skill",
+    "canManage": "可编辑",
+    "grantAllAgents": "授权所有 Agent",
+    "grantAllPartial": "{{count}} 个 Agent 授权失败",
+    "loadFailed": "无法加载授权",
+    "saveFailed": "无法保存授权",
+    "revokeFailed": "无法撤销授权"
+  },
+  "bulk": {
+    "selected": "已选择 {{count}} 项",
+    "selectSkill": "选择 {{name}}",
+    "selectPage": "选择当前可见 Skill",
+    "enable": "启用",
+    "disable": "禁用",
+    "grantAllAgents": "授权所有 Agent",
+    "delete": "删除",
+    "clear": "清除选择",
+    "enabled": "已启用 {{count}} 个 Skill",
+    "disabled": "已禁用 {{count}} 个 Skill",
+    "grantedAllAgents": "已为 {{count}} 个 Skill 授权所有 Agent",
+    "deleted": "已删除 {{count}} 个 Skill",
+    "failed": "批量操作失败",
+    "deleteTitle": "删除所选 Skill",
+    "deleteDescription": "这将删除 {{count}} 个所选自定义 Skill。请输入 DELETE 确认。"
   }
 }

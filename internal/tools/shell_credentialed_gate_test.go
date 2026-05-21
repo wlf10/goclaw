@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -323,7 +324,11 @@ func TestExec_RejectsWrapperDepthCap(t *testing.T) {
 func TestExec_AllowsShellWrapperWithUnregisteredInner(t *testing.T) {
 	tool, _, ctx := newGateTestTool(t)
 	// registered empty, inner is echo (not registered) → fall-through.
-	result := tool.Execute(ctx, map[string]any{"command": "sh -c 'echo hi'"})
+	command := "sh -c 'echo hi'"
+	if runtime.GOOS == "windows" {
+		command = "cmd /c echo hi"
+	}
+	result := tool.Execute(ctx, map[string]any{"command": command})
 	if result.IsError {
 		t.Fatalf("expected pass-through when inner unregistered, got error: %s", result.ForLLM)
 	}
@@ -394,7 +399,11 @@ func TestExec_FallThrough_ScrubsGHToken(t *testing.T) {
 	t.Setenv("GH_TOKEN", "supersecretvalue")
 	// Use single-quote printf so shell sees the literal; our gate lets "sh"
 	// fall through (sh is not registered, echo is not registered).
-	result := tool.Execute(ctx, map[string]any{"command": `sh -c 'echo "token=$GH_TOKEN"'`})
+	command := `sh -c 'echo "token=$GH_TOKEN"'`
+	if runtime.GOOS == "windows" {
+		command = `cmd /c echo token=%GH_TOKEN%`
+	}
+	result := tool.Execute(ctx, map[string]any{"command": command})
 	if result.IsError {
 		t.Fatalf("expected pass-through, got: %s", result.ForLLM)
 	}

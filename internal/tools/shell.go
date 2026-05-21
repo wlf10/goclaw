@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -114,8 +115,18 @@ func (t *ExecTool) SetSandboxKey(key string) {}
 // These are NOT configurable via deny groups — they always apply regardless of group config.
 func (t *ExecTool) DenyPaths(paths ...string) {
 	for _, p := range paths {
-		escaped := regexp.QuoteMeta(p)
-		t.pathDenyPatterns = append(t.pathDenyPatterns, regexp.MustCompile(escaped))
+		seen := make(map[string]struct{}, 3)
+		for _, variant := range []string{p, filepath.ToSlash(p), filepath.FromSlash(p)} {
+			if variant == "" {
+				continue
+			}
+			if _, ok := seen[variant]; ok {
+				continue
+			}
+			seen[variant] = struct{}{}
+			escaped := regexp.QuoteMeta(variant)
+			t.pathDenyPatterns = append(t.pathDenyPatterns, regexp.MustCompile(escaped))
+		}
 		t.pathDenyRoots = append(t.pathDenyRoots, p)
 	}
 }

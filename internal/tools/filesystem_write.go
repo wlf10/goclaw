@@ -15,8 +15,8 @@ import (
 type WriteFileTool struct {
 	workspace       string
 	restrict        bool
-	allowedPrefixes []string                    // extra allowed path prefixes (cross-drive on Windows)
-	deniedPrefixes  []string                    // path prefixes to deny access to (e.g. .goclaw)
+	allowedPrefixes []string // extra allowed path prefixes (cross-drive on Windows)
+	deniedPrefixes  []string // path prefixes to deny access to (e.g. .goclaw)
 	sandboxMgr      sandbox.Manager
 	contextFileIntc *ContextFileInterceptor     // nil = no virtual FS routing
 	memIntc         *MemoryInterceptor          // nil = no memory routing
@@ -258,6 +258,10 @@ func (t *WriteFileTool) executeInSandbox(ctx context.Context, path, content, san
 	if cwdErr != nil {
 		return ErrorResult(fmt.Sprintf("sandbox path mapping: %v", cwdErr))
 	}
+	bridge, err := t.getFsBridge(ctx, sandboxKey, containerCwd)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("sandbox error: %v", err))
+	}
 	containerPath := ResolveSandboxPath(path, containerCwd)
 
 	if err := bridge.WriteFile(ctx, containerPath, content, appendMode); err != nil {
@@ -293,10 +297,10 @@ func (t *WriteFileTool) executeInSandbox(ctx context.Context, path, content, san
 	return result
 }
 
-func (t *WriteFileTool) getFsBridge(ctx context.Context, sandboxKey string) (*sandbox.FsBridge, error) {
+func (t *WriteFileTool) getFsBridge(ctx context.Context, sandboxKey, containerCwd string) (*sandbox.FsBridge, error) {
 	sb, err := t.sandboxMgr.Get(ctx, sandboxKey, t.workspace, SandboxConfigFromCtx(ctx))
 	if err != nil {
 		return nil, err
 	}
-	return sandbox.NewFsBridge(sb.ID(), sandbox.DefaultContainerWorkdir), nil
+	return sandbox.NewFsBridge(sb.ID(), containerCwd), nil
 }

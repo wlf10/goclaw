@@ -17,24 +17,24 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/cache"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
-	"github.com/nextlevelbuilder/goclaw/internal/consolidation"
-	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
-	kg "github.com/nextlevelbuilder/goclaw/internal/knowledgegraph"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/discord"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/facebook"
-	"github.com/nextlevelbuilder/goclaw/internal/channels/pancake"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/feishu"
+	"github.com/nextlevelbuilder/goclaw/internal/channels/pancake"
 	slackchannel "github.com/nextlevelbuilder/goclaw/internal/channels/slack"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/telegram"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/whatsapp"
 	"github.com/nextlevelbuilder/goclaw/internal/channels/zalo"
 	zalopersonal "github.com/nextlevelbuilder/goclaw/internal/channels/zalo/personal"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
+	"github.com/nextlevelbuilder/goclaw/internal/consolidation"
 	"github.com/nextlevelbuilder/goclaw/internal/edition"
+	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway/methods"
 	"github.com/nextlevelbuilder/goclaw/internal/hooks"
 	httpapi "github.com/nextlevelbuilder/goclaw/internal/http"
+	kg "github.com/nextlevelbuilder/goclaw/internal/knowledgegraph"
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
@@ -44,6 +44,9 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/vault"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
+
+	// Register workstation backend factories via init().
+	_ "github.com/nextlevelbuilder/goclaw/internal/workstation/backends"
 )
 
 func runGateway() {
@@ -79,6 +82,10 @@ func runGateway() {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+	if err := config.ValidateGatewayAuth(cfg.Gateway); err != nil {
+		slog.Error("unsafe gateway auth configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -273,6 +280,11 @@ func runGateway() {
 	// Register cron/heartbeat/session/message tools, aliases, allow-paths, store wiring.
 	heartbeatTool, hasMemory := wireExtraTools(pgStores, toolsReg, msgBus, workspace, dataDir, agentCfg, globalSkillsDir, builtinSkillsDir)
 
+	// Register workstation_exec + claude_remote tools (Standard edition only; deny-all until Phase 6).
+	// cleanupWorkstation stops the activity sink retention goroutine and drains the write buffer.
+	cleanupWorkstation := wireWorkstationTools(pgStores, toolsReg, domainBus)
+	defer cleanupWorkstation()
+
 	// Create all agents — resolved lazily from database by the managed resolver.
 	agentRouter := agent.NewRouter()
 	if traceCollector != nil {
@@ -317,8 +329,8 @@ func runGateway() {
 		agentRouter:      agentRouter,
 		toolsReg:         toolsReg,
 		skillsLoader:     skillsLoader,
-		enrichProgress: enrichProgress,
-		enrichWorker:   enrichWorker,
+		enrichProgress:   enrichProgress,
+		enrichWorker:     enrichWorker,
 		workspace:        workspace,
 		dataDir:          dataDir,
 		domainBus:        domainBus,
@@ -331,6 +343,7 @@ func runGateway() {
 		mcpToolLister = mcpMgr
 	}
 	httpapi.InitGatewayToken(cfg.Gateway.Token)
+	httpapi.InitGatewayNoAuthFallbackAllowed(config.GatewayNoAuthFallbackAllowed(cfg.Gateway))
 	exportTokenStore := httpapi.InitExportTokenStore()
 	defer exportTokenStore.Stop()
 	agentsH, skillsH, tracesH, mcpH, channelInstancesH, providersH, builtinToolsH, pendingMessagesH, teamEventsH, secureCLIH, secureCLIGrantH, mcpUserCredsH := wireHTTP(pgStores, cfg.Agents.Defaults.Workspace, dataDir, bundledSkillsDir, msgBus, toolsReg, providerRegistry, modelReg, permPE.IsOwner, gatewayAddr, mcpToolLister)
@@ -401,6 +414,20 @@ func runGateway() {
 		}
 		hm.Register(server.Router())
 		slog.Info("registered hooks RPC methods")
+	}
+
+	// Workstations WS methods — Standard edition only.
+	// Lite (desktop/SQLite) must NOT expose workstation RPC methods.
+	if edition.Current().Name != "lite" && pgStores.Workstations != nil && pgStores.WorkstationLinks != nil {
+		wsMethods := methods.NewWorkstationsMethods(pgStores.Workstations, pgStores.WorkstationLinks)
+		if pgStores.WorkstationPermissions != nil {
+			wsMethods.SetPermStore(pgStores.WorkstationPermissions)
+		}
+		if pgStores.WorkstationActivity != nil {
+			wsMethods.SetActivityStore(pgStores.WorkstationActivity)
+		}
+		wsMethods.Register(server.Router())
+		slog.Info("registered workstations RPC methods")
 	}
 
 	// Wire post-turn processor for team task dispatch (WS chat.send + HTTP API paths).

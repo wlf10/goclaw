@@ -97,6 +97,7 @@ func TestCanAccess_AdminMethods(t *testing.T) {
 	pe := NewPolicyEngine(nil)
 	adminMethods := []string{
 		protocol.MethodConfigApply,
+		protocol.MethodConfigPermissionsCheck,
 		protocol.MethodAgentsCreate,
 		protocol.MethodAgentsDelete,
 		protocol.MethodAPIKeysCreate,
