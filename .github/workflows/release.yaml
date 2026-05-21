@@ -21,7 +21,7 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -64,7 +64,7 @@ jobs:
   build-binaries:
     needs: release
     if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -120,7 +120,7 @@ jobs:
   checksums:
     needs: [release, build-binaries]
     if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - name: Download all binary assets
@@ -230,7 +230,7 @@ jobs:
   docker-merge:
     needs: [release, docker-build]
     if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -354,7 +354,7 @@ jobs:
   docker-web-merge:
     needs: [release, docker-web-build]
     if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
     steps:
       - name: Download digests
@@ -413,7 +413,7 @@ jobs:
   notify-discord:
     needs: [release, build-binaries, docker-merge, docker-web-merge]
     if: always() && needs.release.outputs.released == 'true' && !cancelled()
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Send Discord notification
