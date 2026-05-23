@@ -267,7 +267,9 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 		}
 
 		// Expand ~ in workspace path and ensure directory exists.
-		// For non-master tenants, prefix workspace with tenant slug directory.
+		// When ag.Workspace is set (DB), use it directly.
+		// When empty, use deps.Workspace (raw root). The resolver
+		// (resolver_impl.go) computes tenant+agent+user via tenantPath().
 		workspace := ag.Workspace
 		if workspace != "" {
 			workspace = config.ExpandHome(workspace)
@@ -275,12 +277,10 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 				workspace, _ = filepath.Abs(workspace)
 			}
 		}
-		if tenantSlug != "" {
-			if deps.Workspace != "" {
-				workspace = config.TenantWorkspace(deps.Workspace, ag.TenantID, tenantSlug)
-			}
-		}
 		// Fallback to global workspace if per-agent workspace is empty
+		if workspace == "" && deps.Workspace != "" {
+			workspace = deps.Workspace
+		}
 		if workspace == "" && deps.Workspace != "" {
 			workspace = deps.Workspace
 		}
