@@ -266,23 +266,18 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			tenantSlug = resolveTenantSlug(deps.TenantStore, ag.TenantID)
 		}
 
-		// Expand ~ in workspace path and ensure directory exists.
-		// When ag.Workspace is set (DB), use it directly.
-		// When empty, use deps.Workspace (raw root). The resolver
-		// (resolver_impl.go) computes tenant+agent+user via tenantPath().
-		workspace := ag.Workspace
-		if workspace != "" {
-			workspace = config.ExpandHome(workspace)
-			if !filepath.IsAbs(workspace) {
-				workspace, _ = filepath.Abs(workspace)
+		// Compute workspace root for the resolver.
+		// The resolver (resolver_impl.go) builds the full path from BaseDir
+		// via tenantPath() + agentID + userID. BaseDir must be the raw root,
+		// NOT the pre-resolved DB path — otherwise tenantPath() duplicates
+		// tenants/{slug}. ag.Workspace from DB is already the full path and
+		// is kept only for backward compat / mkdir.
+		workspace := deps.Workspace
+		if workspace == "" {
+			workspace = ag.Workspace
+			if workspace != "" {
+				workspace = config.ExpandHome(workspace)
 			}
-		}
-		// Fallback to global workspace if per-agent workspace is empty
-		if workspace == "" && deps.Workspace != "" {
-			workspace = deps.Workspace
-		}
-		if workspace == "" && deps.Workspace != "" {
-			workspace = deps.Workspace
 		}
 		if workspace != "" {
 			if err := os.MkdirAll(workspace, 0755); err != nil {
