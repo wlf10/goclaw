@@ -6,6 +6,18 @@ Significant changes, features, and fixes in reverse chronological order.
 
 ## 2026-05-24
 
+### Google Workspace CLI runtime integration
+
+**Features**
+
+- Added `gws` as a preinstalled Google Workspace CLI in the full runtime image.
+- Added a SecureCLI `gws` preset with encrypted credential injection fields and guardrails for interactive auth/export commands.
+- Documented Drive, Gmail, and Calendar command patterns plus live credential smoke-test requirements.
+
+**Tests**
+
+- Added runtime binary discovery, SecureCLI preset, deny-pattern, and Dockerfile contract coverage for Google Workspace CLI.
+
 ### Slash skill commands
 
 **Features**

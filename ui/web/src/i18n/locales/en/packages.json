@@ -5,7 +5,7 @@
     "title": "Runtimes",
     "scopeTitle": "Container-scoped runtime status",
     "scopeDesc": "These checks run inside the active GoClaw runtime container. Host-installed runtimes, shell profile changes, and nvm-managed binaries are not used here.",
-    "minimalImageHint": "The published latest image is minimal, so missing Python or Node runtimes can be expected there. Use the python, node, or full image variant, rebuild with ENABLE_PYTHON=true / ENABLE_NODE=true / ENABLE_FULL_SKILLS=true, or install runtimes manually in this container.",
+    "minimalImageHint": "Published latest includes Python but not Node. Use the full image for Node/npm and bundled extras, use base for the smallest image, rebuild with ENABLE_NODE=true / ENABLE_FULL_SKILLS=true, or install runtimes manually in this container.",
     "available": "Available",
     "missing": "Missing",
     "missingInContainer": "Missing in container"

@@ -403,3 +403,27 @@ func TestResolveAndMatchBinaryFallsBackToRuntimeExecutableDirs(t *testing.T) {
 		t.Fatalf("path = %q, want %q", got, binaryPath)
 	}
 }
+
+func TestResolveAndMatchBinaryFindsGoogleWorkspaceRuntimeBinary(t *testing.T) {
+	runtimeDir := t.TempDir()
+	t.Setenv("RUNTIME_DIR", runtimeDir)
+	t.Setenv("NPM_CONFIG_PREFIX", "")
+	t.Setenv("PATH", "/usr/bin")
+
+	binDir := filepath.Join(runtimeDir, "npm-global", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryPath := filepath.Join(binDir, "gws")
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveAndMatchBinary("gws", nil)
+	if err != nil {
+		t.Fatalf("resolveAndMatchBinary returned error: %v", err)
+	}
+	if got != binaryPath {
+		t.Fatalf("path = %q, want %q", got, binaryPath)
+	}
+}

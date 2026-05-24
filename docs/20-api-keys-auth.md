@@ -301,6 +301,8 @@ SecureCLI is a feature that allows GoClaw to automatically inject credentials in
 
 When an agent needs to run `gh auth`, `gcloud auth`, or other authenticated CLI commands, the admin can configure a SecureCLI binary with encrypted environment variables. The agent never sees the raw credentials — they are injected directly into the child process environment via Direct Exec Mode.
 
+Built-in presets include `gh`, `gcloud`, `gws`, `aws`, `kubectl`, and `terraform`. The `gws` preset targets Google Workspace CLI (`@googleworkspace/cli`) and supports `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`, `GOOGLE_WORKSPACE_CLI_TOKEN`, `GOOGLE_WORKSPACE_CLI_CLIENT_ID`, and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET`.
+
 ### Database Schema
 
 ```sql
@@ -333,6 +335,18 @@ CREATE TABLE secure_cli_binaries (
 | `DELETE` | `/v1/cli-credentials/{id}` | Delete a SecureCLI config |
 | `POST` | `/v1/cli-credentials/{id}/test` | Dry-run test (requires admin) |
 | `GET` | `/v1/cli-credentials/presets` | List preset templates for common CLIs |
+
+### Google Workspace CLI preset
+
+The `gws` preset is intended for server-side Google Workspace reads and reviewed admin workflows. It blocks interactive credential commands (`gws auth setup`, `gws auth login`, `gws auth export`, `gws auth logout`) because those flows can create, expose, or clear credentials outside GoClaw's encrypted store.
+
+Credential options:
+
+- `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`: path to exported `gws` credentials or an OAuth credentials JSON file.
+- `GOOGLE_WORKSPACE_CLI_TOKEN`: pre-obtained OAuth access token.
+- `GOOGLE_WORKSPACE_CLI_CLIENT_ID` / `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET`: optional OAuth client values for deployments that manage auth outside the agent turn.
+
+Use `docs/google-workspace-cli.md` for command examples and smoke-test guidance.
 
 ### Features
 

@@ -19,7 +19,7 @@ type CLIPreset struct {
 type EnvVarDef struct {
 	Name     string `json:"name"`
 	Desc     string `json:"desc"`
-	IsFile   bool   `json:"is_file,omitempty"`   // credential is a file path (e.g. GOOGLE_APPLICATION_CREDENTIALS)
+	IsFile   bool   `json:"is_file,omitempty"` // credential is a file path (e.g. GOOGLE_APPLICATION_CREDENTIALS)
 	Optional bool   `json:"optional,omitempty"`
 }
 
@@ -44,6 +44,20 @@ var CLIPresets = map[string]CLIPreset{
 		DenyVerbose: []string{`--verbosity=debug`, `--log-http`},
 		Timeout:     120,
 		Tips:        "Use --format=json for structured output",
+	},
+	"gws": {
+		BinaryName:  "gws",
+		Description: "Google Workspace CLI",
+		EnvVars: []EnvVarDef{
+			{Name: "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE", Desc: "Path to exported gws credentials or OAuth credentials JSON", IsFile: true},
+			{Name: "GOOGLE_WORKSPACE_CLI_TOKEN", Desc: "Pre-obtained Google OAuth access token", Optional: true},
+			{Name: "GOOGLE_WORKSPACE_CLI_CLIENT_ID", Desc: "OAuth client ID for manual auth flows", Optional: true},
+			{Name: "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", Desc: "OAuth client secret for manual auth flows", Optional: true},
+		},
+		DenyArgs:    []string{`auth\s+(setup|login|export|logout)`},
+		DenyVerbose: nil,
+		Timeout:     120,
+		Tips:        "Use --params JSON for query parameters, --json for request bodies, and --page-all for paginated reads. Prefer read/list/get commands unless an admin has approved write commands.",
 	},
 	"aws": {
 		BinaryName:  "aws",

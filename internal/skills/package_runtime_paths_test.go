@@ -67,6 +67,29 @@ func TestFindRuntimeExecutableFindsNpmGlobalBinary(t *testing.T) {
 	}
 }
 
+func TestFindRuntimeExecutableFindsGoogleWorkspaceBinary(t *testing.T) {
+	runtimeDir := t.TempDir()
+	t.Setenv("RUNTIME_DIR", runtimeDir)
+	t.Setenv("NPM_CONFIG_PREFIX", "")
+
+	binDir := npmGlobalBinDir()
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantPath := filepath.Join(binDir, "gws")
+	if err := os.WriteFile(wantPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := FindRuntimeExecutable("gws")
+	if !ok {
+		t.Fatalf("FindRuntimeExecutable did not find gws runtime binary")
+	}
+	if got != wantPath {
+		t.Fatalf("FindRuntimeExecutable path = %q, want %q", got, wantPath)
+	}
+}
+
 func TestFindRuntimeExecutableFindsNpmPackageCliAlias(t *testing.T) {
 	runtimeDir := t.TempDir()
 	t.Setenv("RUNTIME_DIR", runtimeDir)
@@ -96,6 +119,20 @@ func TestFindRuntimeExecutableFindsNpmPackageCliAlias(t *testing.T) {
 	}
 	if got != wantPath {
 		t.Fatalf("FindRuntimeExecutable alias path = %q, want %q", got, wantPath)
+	}
+}
+
+func TestFullImagePreinstallsGoogleWorkspaceCLI(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := string(raw)
+	if !strings.Contains(dockerfile, "ENABLE_FULL_SKILLS") {
+		t.Fatal("Dockerfile contract test cannot locate ENABLE_FULL_SKILLS block")
+	}
+	if !strings.Contains(dockerfile, "@googleworkspace/cli@0.22.5") {
+		t.Fatal("full runtime image must preinstall @googleworkspace/cli@0.22.5")
 	}
 }
 
