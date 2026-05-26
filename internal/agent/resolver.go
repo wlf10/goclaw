@@ -253,17 +253,19 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 		sandboxContainerDir := deps.SandboxContainerDir
 		sandboxWorkspaceAccess := deps.SandboxWorkspaceAccess
 		var sandboxCfgOverride *sandbox.Config
-		if c := ag.ParseSandboxConfig(); c != nil {
-			resolved := c.ToSandboxConfig()
-			sandboxContainerDir = resolved.ContainerWorkdir()
-			sandboxWorkspaceAccess = string(resolved.WorkspaceAccess)
-			sandboxCfgOverride = &resolved
-		}
-
 		// Resolve tenant slug once for workspace + dataDir scoping.
 		var tenantSlug string
 		if ag.TenantID != store.MasterTenantID && ag.TenantID != uuid.Nil {
 			tenantSlug = resolveTenantSlug(deps.TenantStore, ag.TenantID)
+		}
+		if sandboxCfg := ag.ParseSandboxConfig(); sandboxCfg != nil {
+			resolved := sandboxCfg.ToSandboxConfig()
+			resolved.SkillsStoreDir = config.TenantSkillsStoreDir(
+				deps.DataDir, ag.TenantID, tenantSlug,
+			)
+			sandboxContainerDir = resolved.ContainerWorkdir()
+			sandboxWorkspaceAccess = string(resolved.WorkspaceAccess)
+			sandboxCfgOverride = &resolved
 		}
 
 		// Expand ~ in workspace path and ensure directory exists.
