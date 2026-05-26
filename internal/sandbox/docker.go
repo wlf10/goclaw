@@ -80,8 +80,6 @@ func newDockerSandbox(ctx context.Context, name string, cfg Config, workspace st
 	}
 	args = append(args, "-w", containerWorkdir)
 
-	// Bind-mount managed skills-store into sandbox.
-	// When GoClaw runs on the host, resolveHostWorkspacePath returns the path as-is.
 	if cfg.SkillsStoreDir != "" {
 		hostSkillsPath := resolveHostWorkspacePath(ctx, cfg.SkillsStoreDir)
 		skillsContainerPath := filepath.Join(containerWorkdir, ".managed-skills")
@@ -119,6 +117,7 @@ func newDockerSandbox(ctx context.Context, name string, cfg Config, workspace st
 }
 
 func (s *DockerSandbox) Exec(ctx context.Context, command []string, workDir string, opts ...ExecOption) (*ExecResult, error) {
+	_ = workDir
 	s.mu.Lock()
 	s.lastUsed = time.Now()
 	s.mu.Unlock()
@@ -156,7 +155,14 @@ func (s *DockerSandbox) Exec(ctx context.Context, command []string, workDir stri
 			return nil, fmt.Errorf("docker exec: %w", err)
 		}
 	}
-	return &ExecResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+	result := &ExecResult{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}
+	if stdout.truncated {
+		result.Stdout += "\n...[output truncated]"
+	}
+	if stderr.truncated {
+		result.Stderr += "\n...[output truncated]"
+	}
+	return result, nil
 }
 
 func (s *DockerSandbox) Destroy(ctx context.Context) error {
@@ -274,11 +280,55 @@ func (m *DockerManager) startPruning() {
 }
 
 func (m *DockerManager) Prune(ctx context.Context) {
-	// ... pruning logic unchanged
+	idleHours := m.config.IdleHours
+	if idleHours <= 0 {
+		idleHours = 24
+	}
+	maxAgeDays := m.config.MaxAgeDays
+	if maxAgeDays <= 0 {
+		maxAgeDays = 7
+	}
+	now := time.Now()
+	idleThreshold := now.Add(-time.Duration(idleHours) * time.Hour)
+	ageThreshold := now.Add(-time.Duration(maxAgeDays) * 24 * time.Hour)
+	m.mu.RLock()
+	var toRemove []string
+	for key, sb := range m.sandboxes {
+		sb.mu.Lock()
+		lastUsed := sb.lastUsed
+		created := sb.createdAt
+		sb.mu.Unlock()
+		if lastUsed.Before(idleThreshold) || created.Before(ageThreshold) {
+			toRemove = append(toRemove, key)
+		}
+	}
+	m.mu.RUnlock()
+	if len(toRemove) == 0 {
+		return
+	}
+	for _, key := range toRemove {
+		m.mu.Lock()
+		sb, ok := m.sandboxes[key]
+		if ok {
+			delete(m.sandboxes, key)
+		}
+		m.mu.Unlock()
+		if ok {
+			if err := sb.Destroy(ctx); err != nil {
+				slog.Warn("failed to release sandbox", "key", key, "error", err)
+			} else {
+				slog.Info("pruned idle sandbox container", "key", key, "container", sb.containerID)
+			}
+		}
+	}
 }
 
 func sanitizeKey(key string) string {
-	return strings.NewReplacer(":", "-", "/", "-", " ", "-", ".", "-").Replace(key)
+	safe := strings.NewReplacer(":", "-", "/", "-", " ", "-", ".", "-").Replace(key)
+	if len(safe) > 50 {
+		safe = safe[:50]
+	}
+	return safe
 }
 
 type limitedBuffer struct {
