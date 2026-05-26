@@ -117,7 +117,6 @@ func newDockerSandbox(ctx context.Context, name string, cfg Config, workspace st
 }
 
 func (s *DockerSandbox) Exec(ctx context.Context, command []string, workDir string, opts ...ExecOption) (*ExecResult, error) {
-	_ = workDir
 	s.mu.Lock()
 	s.lastUsed = time.Now()
 	s.mu.Unlock()
@@ -166,7 +165,13 @@ func (s *DockerSandbox) Exec(ctx context.Context, command []string, workDir stri
 }
 
 func (s *DockerSandbox) Destroy(ctx context.Context) error {
-	return exec.CommandContext(ctx, "docker", "rm", "-f", s.containerID).Run()
+	cmd := exec.CommandContext(ctx, "docker", "rm", "-f", s.containerID)
+	if err := cmd.Run(); err != nil {
+		slog.Warn("failed to remove sandbox container", "id", s.containerID, "error", err)
+		return err
+	}
+	slog.Info("sandbox container destroyed", "id", s.containerID)
+	return nil
 }
 
 func (s *DockerSandbox) ID() string { return s.containerID }
