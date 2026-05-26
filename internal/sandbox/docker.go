@@ -101,14 +101,13 @@ func newDockerSandbox(ctx context.Context, name string, cfg Config, workspace st
 	}
 	args = append(args, "-w", containerWorkdir)
 
-	// Mount managed skills-store for read_file access
+	// Mount managed skills-store for read_file access.
+	// Always mount when SkillsStoreDir is non-empty (no host-mode guard).
 	if cfg.SkillsStoreDir != "" {
 		hostSkillsPath := resolveHostWorkspacePath(ctx, cfg.SkillsStoreDir)
-		if hostSkillsPath != cfg.SkillsStoreDir {
-			skillsContainerPath := filepath.Join(containerWorkdir, ".managed-skills")
-			args = append(args, "-v",
-				fmt.Sprintf("%s:%s:ro", hostSkillsPath, skillsContainerPath))
-		}
+		skillsContainerPath := filepath.Join(containerWorkdir, ".managed-skills")
+		args = append(args, "-v",
+			fmt.Sprintf("%s:%s:ro", hostSkillsPath, skillsContainerPath))
 	}
 
 	// Environment variables
