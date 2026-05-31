@@ -37,11 +37,26 @@ func SandboxCwd(ctx context.Context, globalWorkspace, containerBase string) (str
 // ResolveSandboxPath resolves a tool-provided path (relative or absolute)
 // against the sandbox container CWD. Escapes are rejected to containerCwd so a
 // tool scoped to /workspace/agent-a cannot address /workspace/agent-b.
+//
+// Managed skills paths (e.g. .../skills-store/... paths from FsBridge) are
+// rewritten to {cwd}/.managed-skills/... before the CWD escape check.
 func ResolveSandboxPath(filePath, containerCwd string) string {
 	cwd := path.Clean(containerCwd)
 	if cwd == "." || cwd == "/" {
 		cwd = "/workspace"
 	}
+
+	// Rewrite managed skills paths before the CWD escape check.
+	ms_prefixes := []string{
+		"/root/.goclaw/data/skills-store/",
+		"/root/.goclaw/data/tenants/home/skills-store/",
+	}
+	for _, p := range ms_prefixes {
+		if strings.HasPrefix(filePath, p) {
+			return path.Clean(path.Join(cwd, ".managed-skills", strings.TrimPrefix(filePath, p)))
+		}
+	}
+
 	var resolved string
 	if strings.HasPrefix(filePath, "/") {
 		resolved = path.Clean(filePath)
