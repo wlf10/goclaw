@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,12 +20,17 @@ import (
 
 // TracesHandler handles LLM trace listing and detail endpoints.
 type TracesHandler struct {
-	tracing store.TracingStore
+	tracing     store.TracingStore
+	runTimeline store.RunTimelineStore
 }
 
 // NewTracesHandler creates a handler for trace management endpoints.
-func NewTracesHandler(tracing store.TracingStore) *TracesHandler {
-	return &TracesHandler{tracing: tracing}
+func NewTracesHandler(tracing store.TracingStore, timelines ...store.RunTimelineStore) *TracesHandler {
+	h := &TracesHandler{tracing: tracing}
+	if len(timelines) > 0 {
+		h.runTimeline = timelines[0]
+	}
+	return h
 }
 
 // RegisterRoutes registers trace routes on the given mux.
@@ -33,6 +39,7 @@ func (h *TracesHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/traces/follow", h.authMiddleware(h.handleFollow))
 	mux.HandleFunc("GET /v1/traces/{traceID}/export", h.authMiddleware(h.handleExport))
 	mux.HandleFunc("GET /v1/traces/{traceID}", h.authMiddleware(h.handleGet))
+	mux.HandleFunc("GET /v1/runs/{runID}/timeline", h.authMiddleware(h.handleRunTimeline))
 	mux.HandleFunc("GET /v1/costs/summary", h.authMiddleware(h.handleCostSummary))
 }
 
@@ -254,6 +261,67 @@ func (h *TracesHandler) handleCostSummary(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func (h *TracesHandler) handleRunTimeline(w http.ResponseWriter, r *http.Request) {
+	locale := store.LocaleFromContext(r.Context())
+	if h.runTimeline == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": i18n.T(locale, i18n.MsgRunTimelineUnavailable)})
+		return
+	}
+	runID := r.PathValue("runID")
+	if strings.TrimSpace(runID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "run_id")})
+		return
+	}
+	opts := store.RunTimelineListOpts{
+		RunID:      runID,
+		SessionKey: r.URL.Query().Get("session_key"),
+		Limit:      200,
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			opts.Limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			opts.Offset = n
+		}
+	}
+	items, err := h.runTimeline.ListRunTimelineItems(r.Context(), opts)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	auth := resolveAuth(r)
+	if !permissions.HasMinRole(auth.Role, permissions.RoleAdmin) {
+		callerID := store.UserIDFromContext(r.Context())
+		items = filterTimelineItemsByUser(items, callerID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"run_id":      runID,
+		"session_key": opts.SessionKey,
+		"items":       items,
+		"limit":       opts.Limit,
+		"offset":      opts.Offset,
+	})
+}
+
+func filterTimelineItemsByUser(items []store.RunTimelineItem, userID string) []store.RunTimelineItem {
+	if userID == "" {
+		return nil
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if item.UserID == userID {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 // traceExportEntry is a trace with its spans and recursive sub-traces.

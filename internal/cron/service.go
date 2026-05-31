@@ -214,7 +214,8 @@ func (cs *Service) GetJob(jobID string) (*Job, bool) {
 
 	for i, job := range cs.store.Jobs {
 		if job.ID == jobID {
-			return &cs.store.Jobs[i], true
+			jobCopy := cs.store.Jobs[i]
+			return &jobCopy, true
 		}
 	}
 	return nil, false

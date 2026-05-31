@@ -374,17 +374,7 @@ func (t *ExecTool) executeCredentialed(ctx context.Context, cred *store.SecureCL
 		return credentialedShellOperatorError(rawCommand, ops)
 	}
 
-	// Step 2: Resolve binary to absolute path and verify against config
-	absPath, err := resolveAndMatchBinary(binary, cred.BinaryPath)
-	if err != nil {
-		r := credentialedPathError(binary, err)
-		if t.sandboxMgr != nil && sandboxKey != "" {
-			r.ForLLM += hintBinaryNotFound
-		}
-		return r
-	}
-
-	// Step 3: Per-binary deny check (deny_args)
+	// Step 2: Per-binary deny check (deny_args)
 	denyArgs, allowAudits := applyCommandKeywordAllowlist(binary, args, t.commandKeywordAllowlistSnapshot())
 	if p := matchesBinaryDeny(denyArgs, cred.DenyArgs); p != "" {
 		return credentialedDenyError(binary, args, p)
@@ -409,16 +399,44 @@ func (t *ExecTool) executeCredentialed(ctx context.Context, cred *store.SecureCL
 		)
 	}
 
-	// Step 4: Decrypt env vars from store (already decrypted by store layer).
+	// Step 3: Decrypt env vars from store (already decrypted by store layer).
 	// Per-user env overrides take priority over binary/grant env.
 	envMap, err := mergeCredentialedEnv(cred)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("credentialed exec: invalid env JSON for %q: %v", binary, err))
 	}
+	slog.Debug("secure_cli.env_merged",
+		"binary", binary,
+		"agent_id", store.AgentIDFromContext(ctx),
+		"tenant_id", store.TenantIDFromContext(ctx),
+		"credential_user_id_present", store.CredentialUserIDFromContext(ctx) != "",
+		"env_keys", sortedKeys(envMap),
+	)
+	if missing := missingRequiredCredentialEnv(binary, envMap); len(missing) > 0 {
+		slog.Warn("secure_cli.missing_required_env",
+			"binary", binary,
+			"agent_id", store.AgentIDFromContext(ctx),
+			"tenant_id", store.TenantIDFromContext(ctx),
+			"credential_user_id_present", store.CredentialUserIDFromContext(ctx) != "",
+			"missing_env_keys", missing,
+			"env_keys", sortedKeys(envMap),
+		)
+		return credentialedMissingEnvError(binary, missing)
+	}
 
-	// Step 5: Register credential values for output scrubbing
+	// Step 4: Register credential values for output scrubbing
 	for _, v := range envMap {
 		AddCredentialScrubValues(v)
+	}
+
+	// Step 5: Resolve binary to absolute path and verify against config
+	absPath, err := resolveAndMatchBinary(binary, cred.BinaryPath)
+	if err != nil {
+		r := credentialedPathError(binary, err)
+		if t.sandboxMgr != nil && sandboxKey != "" {
+			r.ForLLM += hintBinaryNotFound
+		}
+		return r
 	}
 
 	// Step 6: Determine timeout
@@ -531,6 +549,20 @@ func mergeCredentialedEnv(cred *store.SecureCLIBinary) (map[string]string, error
 	return envMap, nil
 }
 
+func missingRequiredCredentialEnv(binary string, envMap map[string]string) []string {
+	required := requiredCredentialEnvVars(binary)
+	if len(required) == 0 {
+		return nil
+	}
+	missing := make([]string, 0, len(required))
+	for _, key := range required {
+		if strings.TrimSpace(envMap[key]) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
 // validateExecCwd checks that cmd.Dir exists and is a directory before
 // cmd.Start(). Empty cwd is allowed (Go interprets as "inherit parent's dir").
 //
@@ -623,7 +655,16 @@ func (t *ExecTool) executeCredentialedHost(ctx context.Context, absPath string, 
 func (t *ExecTool) executeCredentialedSandbox(ctx context.Context, absPath string, args []string,
 	cwd string, sandboxKey string, envMap map[string]string, timeout time.Duration) *Result {
 
-	sb, err := t.sandboxMgr.Get(ctx, sandboxKey, t.workspace, SandboxConfigFromCtx(ctx))
+	mountWorkspace, err := effectiveSandboxWorkspace(ctx, t.workspace)
+	if err != nil {
+		return ErrorResult(err.Error())
+	}
+	containerCwd, cwdErr := sandboxCwdForHostPath(cwd, mountWorkspace, sandbox.DefaultContainerWorkdir)
+	if cwdErr != nil {
+		return ErrorResult(fmt.Sprintf("credentialed sandbox path mapping: %v", cwdErr))
+	}
+
+	sb, err := t.sandboxMgr.Get(ctx, sandboxKey, mountWorkspace, SandboxConfigFromCtx(ctx))
 	if err != nil {
 		slog.Warn("security.credentialed_exec_sandbox_unavailable",
 			"binary", absPath, "error", err)
@@ -632,7 +673,7 @@ func (t *ExecTool) executeCredentialedSandbox(ctx context.Context, absPath strin
 
 	// Direct exec inside sandbox: [absPath, args...] with env injection
 	command := append([]string{absPath}, args...)
-	result, err := sb.Exec(ctx, command, cwd, sandbox.WithEnv(envMap))
+	result, err := sb.Exec(ctx, command, containerCwd, sandbox.WithEnv(envMap))
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("credentialed sandbox exec: %v", err))
 	}
@@ -812,6 +853,17 @@ func credentialedDenyError(binary string, args []string, pattern string) *Result
 			"This operation requires admin approval and cannot be performed automatically.",
 			binary, strings.Join(args, " "), pattern),
 		ForUser: fmt.Sprintf("Operation '%s %s' is blocked by security policy.", binary, strings.Join(args, " ")),
+		IsError: true,
+	}
+}
+
+func credentialedMissingEnvError(binary string, keys []string) *Result {
+	return &Result{
+		ForLLM: fmt.Sprintf("[CREDENTIALED EXEC] Credential config missing required credential env.\n"+
+			"Binary: %s\nMissing env keys: %s\n"+
+			"Configure the missing key as a SecureCLI user credential for the same user context, then grant this binary to the target agent.",
+			binary, strings.Join(keys, ", ")),
+		ForUser: fmt.Sprintf("CLI credential for %q is missing required env: %s.", binary, strings.Join(keys, ", ")),
 		IsError: true,
 	}
 }

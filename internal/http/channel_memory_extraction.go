@@ -61,7 +61,7 @@ func (h *ChannelInstancesHandler) handleMemoryExtractionSettings(w http.Response
 		writeError(w, http.StatusInternalServerError, protocol.ErrInternal, "failed to update memory extraction settings")
 		return
 	}
-	h.emitCacheInvalidate()
+	h.emitCacheInvalidate(inst.ID.String())
 	emitAudit(h.msgBus, r, "channel_memory.settings_updated", "channel_instance", inst.ID.String())
 	writeJSON(w, http.StatusOK, map[string]any{"config": normalized})
 }

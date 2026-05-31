@@ -89,6 +89,14 @@
     "customOnlyReason": "This action only applies to custom skills",
     "noAgentsReason": "No current agents available"
   },
+  "export": {
+    "format": "Archive format",
+    "download": "Download",
+    "downloadSelected": "Download selected",
+    "downloading": "Downloading...",
+    "downloadSuccess": "Download started",
+    "downloadFailed": "Download failed"
+  },
   "visibility": {
     "clickToCycle": "Click to change access mode"
   },

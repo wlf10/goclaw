@@ -376,6 +376,22 @@ The default prefix is `/`; supported prompt forms are `/<slug> prompt`,
 | `GET` | `/v1/skills/export` | Export skills bundle |
 | `POST` | `/v1/skills/import` | Import skills bundle |
 
+`GET /v1/skills/export` supports direct download and the existing SSE token flow:
+
+| Query | Description |
+|-------|-------------|
+| `stream=true` | Start the existing SSE export flow and return a temporary `download_url` |
+| `format=tar.gz\|tgz\|zip` | Archive format; defaults to `tar.gz`. `tgz` is an alias for gzip tar output |
+| `id=<uuid>` | Select one skill ID. Can be repeated for multiple selected skills |
+| `ids=<uuid>,<uuid>` | Select multiple skill IDs as a comma-separated list |
+| `include_system=true` | Include system skills in a full export when no selected IDs are provided |
+
+Without `id` or `ids`, export remains backward-compatible and includes tenant
+custom skills by default. Explicitly selected IDs may include system/core skills
+without `include_system=true`; tenant-scoped custom skills are still filtered by
+the request tenant. ZIP support is export/download only; the import endpoint
+continues to accept the existing skills bundle format.
+
 ---
 
 ## 6. Providers
@@ -1303,6 +1319,7 @@ LLM call tracing and cost analysis.
 | `GET` | `/v1/traces/follow` | Poll trace changes for one session or agent |
 | `GET` | `/v1/traces/{traceID}` | Get trace with spans |
 | `GET` | `/v1/traces/{traceID}/export` | Export trace tree (gzipped JSON) |
+| `GET` | `/v1/runs/{runID}/timeline` | Get persisted run archive timeline items |
 
 **Filters:** `agent_id`, `user_id`, `session_key`, `status`, `channel`
 
@@ -1317,6 +1334,42 @@ Follow response:
   "server_time": "2026-05-20T11:23:00Z",
   "next_since": "2026-05-20T11:23:00Z",
   "limit": 50
+}
+```
+
+### Run Timeline
+
+`GET /v1/runs/{runID}/timeline` returns display-safe archive entries for one
+agent run. Optional query params: `session_key`, `limit` (default 200, max 500),
+and `offset`. Non-admin callers only receive entries owned by their effective
+`X-GoClaw-User-Id`.
+
+Timeline items are ordered by run sequence for `run_id` reads and include only
+safe previews for tool arguments/results. Raw thinking is not persisted.
+
+Example:
+
+```json
+{
+  "run_id": "run-123",
+  "session_key": "agent:demo:direct:user-1",
+  "items": [{
+    "id": "019e...",
+    "run_id": "run-123",
+    "session_key": "agent:demo:direct:user-1",
+    "seq": 2,
+    "item_type": "tool.call",
+    "status": "running",
+    "title": "web_fetch",
+    "preview": "{\"url\":\"https://example.com\"}",
+    "tool_name": "web_fetch",
+    "tool_call_id": "call_123",
+    "trace_id": "019e...",
+    "span_id": "019e...",
+    "created_at": "2026-05-29T10:00:00Z"
+  }],
+  "limit": 200,
+  "offset": 0
 }
 ```
 

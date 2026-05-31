@@ -1,7 +1,15 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
@@ -62,5 +70,78 @@ func TestMergeCredentialedEnvFlattensSensitiveValueEntries(t *testing.T) {
 	}
 	if env["PUBLIC_BASE_URL"] != "https://user.example" {
 		t.Fatalf("PUBLIC_BASE_URL = %q", env["PUBLIC_BASE_URL"])
+	}
+}
+
+func TestExec_RapidAPIMissingRequiredEnvFailsBeforeBinaryResolution(t *testing.T) {
+	stub := newStubSecureCLIStore()
+	stub.byName["rapidapi"] = &store.SecureCLIBinary{
+		BinaryName:     "rapidapi",
+		EncryptedEnv:   []byte("{}"),
+		TimeoutSeconds: 10,
+		DenyArgs:       json.RawMessage("[]"),
+		DenyVerbose:    json.RawMessage("[]"),
+	}
+
+	tool := NewExecTool(t.TempDir(), false)
+	tool.SetSecureCLIStore(stub)
+
+	ctx := store.WithTenantID(store.WithAgentID(context.Background(), uuid.New()), uuid.New())
+	ctx = store.WithCredentialUserID(ctx, "tenant-user-rapidapi")
+	result := tool.Execute(ctx, map[string]any{"command": "rapidapi search weather"})
+
+	if !result.IsError {
+		t.Fatalf("expected missing RAPIDAPI_KEY to fail")
+	}
+	if !strings.Contains(result.ForLLM, "missing required credential env") {
+		t.Fatalf("expected actionable missing-env error, got: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "RAPIDAPI_KEY") {
+		t.Fatalf("expected missing key name in error, got: %s", result.ForLLM)
+	}
+	if strings.Contains(result.ForLLM, "not found in PATH") || strings.Contains(result.ForLLM, "Binary resolution failed") {
+		t.Fatalf("missing env should be reported before binary resolution, got: %s", result.ForLLM)
+	}
+	if strings.Contains(result.ForLLM, "tenant-user-rapidapi") {
+		t.Fatalf("credential user id leaked into user-facing error: %s", result.ForLLM)
+	}
+}
+
+func TestExec_RapidAPIWithRequiredEnvReachesDirectExec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fixture is POSIX-only")
+	}
+
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "rapidapi")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n[ -n \"$RAPIDAPI_KEY\" ] || exit 43\nprintf 'rapidapi args:%s\\n' \"$*\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := newStubSecureCLIStore()
+	stub.byName["rapidapi"] = &store.SecureCLIBinary{
+		BinaryName:     "rapidapi",
+		BinaryPath:     &binPath,
+		EncryptedEnv:   []byte("{}"),
+		UserEnv:        []byte(`{"RAPIDAPI_KEY":"test-key-not-real"}`),
+		TimeoutSeconds: 10,
+		DenyArgs:       json.RawMessage("[]"),
+		DenyVerbose:    json.RawMessage("[]"),
+	}
+
+	tool := NewExecTool(t.TempDir(), false)
+	tool.SetSecureCLIStore(stub)
+
+	ctx := store.WithTenantID(store.WithAgentID(context.Background(), uuid.New()), uuid.New())
+	result := tool.Execute(ctx, map[string]any{"command": "rapidapi search weather"})
+
+	if result.IsError {
+		t.Fatalf("expected rapidapi direct exec to run, got: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "rapidapi args:search weather") {
+		t.Fatalf("expected script output, got: %s", result.ForLLM)
+	}
+	if strings.Contains(result.ForLLM, "test-key-not-real") {
+		t.Fatalf("credential value leaked into output: %s", result.ForLLM)
 	}
 }

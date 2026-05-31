@@ -133,7 +133,7 @@ func (l *Loop) makeBuildMessages() func(ctx context.Context, input *pipeline.Run
 			input.Message, input.ExtraSystemPrompt,
 			input.SessionKey, input.Channel, input.ChannelType,
 			input.BitrixPortalDomain,
-			input.ChatTitle, input.ChatID, input.PeerKind, input.UserID,
+			input.ChatTitle, input.ChatID, input.PeerKind, input.UserID, input.SenderName,
 			input.HistoryLimit, input.SkillFilter, input.LightContext)
 		return msgs, nil
 	}

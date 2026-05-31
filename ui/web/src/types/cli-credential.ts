@@ -58,6 +58,7 @@ export interface CLIPreset {
   deny_verbose: string[];
   timeout: number;
   tips: string;
+  adapter_name?: string;
 }
 
 export interface CLICredentialInput {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -239,9 +240,13 @@ func processNormalMessage(
 		chatIDForRun = lk
 	}
 	blockReply := deps.ChannelMgr != nil && deps.ChannelMgr.ResolveBlockReply(msg.Channel, deps.Cfg.Gateway.BlockReply)
+	chatBehavior := channels.ResolvedChatBehavior{}
+	if deps.ChannelMgr != nil {
+		chatBehavior = deps.ChannelMgr.ResolveChatBehavior(msg.Channel, deps.Cfg.Gateway.ChatBehavior)
+	}
 	toolStatus := deps.Cfg.Gateway.ToolStatus == nil || *deps.Cfg.Gateway.ToolStatus // default true
 	if deps.ChannelMgr != nil {
-		deps.ChannelMgr.RegisterRun(runID, msg.Channel, chatIDForRun, messageID, outMeta, msg.TenantID, enableStream, blockReply, toolStatus)
+		deps.ChannelMgr.RegisterRunWithBehavior(runID, msg.Channel, chatIDForRun, messageID, outMeta, msg.TenantID, enableStream, blockReply, toolStatus, chatBehavior)
 	}
 
 	// Group-aware system prompt: help the LLM adapt tone and behavior for group chats.
@@ -429,37 +434,37 @@ func processNormalMessage(
 
 	// Schedule through main lane (per-session concurrency controlled by maxConcurrent)
 	outCh := deps.Sched.ScheduleWithOpts(schedCtx, "main", agent.RunRequest{
-		SessionKey:        sessionKey,
-		Message:           msg.Content,
-		Media:             reqMedia,
-		ForwardMedia:      fwdMedia,
-		Channel:            msg.Channel,
-		ChannelType:        resolveChannelType(deps.ChannelMgr, msg.Channel),
+		SessionKey:   sessionKey,
+		Message:      msg.Content,
+		Media:        reqMedia,
+		ForwardMedia: fwdMedia,
+		Channel:      msg.Channel,
+		ChannelType:  resolveChannelType(deps.ChannelMgr, msg.Channel),
 		// Forward Bitrix24 portal domain from channel metadata so the
 		// system prompt can teach the LLM the correct entity URL host.
 		// Empty for non-bitrix24 channels — section is skipped downstream.
 		BitrixPortalDomain: msg.Metadata["bitrix_portal"],
 		ChatTitle:          msg.Metadata[tools.MetaChatTitle],
-		ChatID:            msg.ChatID,
-		WorkspaceChatID:   msg.ChatID,
-		PeerKind:          peerKind,
-		LocalKey:          msg.Metadata["local_key"],
-		UserID:            userID,
-		SenderID:          effectiveSenderID,
-		Role:              effectiveRole,
-		SenderName:        resolveSenderName(msg),
-		RunID:             runID,
-		Stream:            enableStream,
-		HistoryLimit:      msg.HistoryLimit,
-		ToolAllow:         msg.ToolAllow,
-		ExtraSystemPrompt: extraPrompt,
-		SkillFilter:       skillFilter,
+		ChatID:             msg.ChatID,
+		WorkspaceChatID:    msg.ChatID,
+		PeerKind:           peerKind,
+		LocalKey:           msg.Metadata["local_key"],
+		UserID:             userID,
+		SenderID:           effectiveSenderID,
+		Role:               effectiveRole,
+		SenderName:         resolveSenderName(msg),
+		RunID:              runID,
+		Stream:             enableStream,
+		HistoryLimit:       msg.HistoryLimit,
+		ToolAllow:          msg.ToolAllow,
+		ExtraSystemPrompt:  extraPrompt,
+		SkillFilter:        skillFilter,
 	}, scheduler.ScheduleOpts{
 		MaxConcurrent: maxConcurrent,
 	})
 
 	// Handle result asynchronously to not block the flush callback.
-	go func(agentKey, channel, chatID, session, rID, peerKind, inboundContent string, meta map[string]string, blockReplyEnabled bool, ptd *tools.PendingTeamDispatch, tenantID, agentUUID uuid.UUID, agentOtherConfig []byte) {
+	go func(agentKey, channel, chatID, session, rID, peerKind, inboundContent string, meta map[string]string, blockReplyEnabled bool, chatBehavior channels.ResolvedChatBehavior, streaming bool, ptd *tools.PendingTeamDispatch, tenantID, agentUUID uuid.UUID, agentOtherConfig []byte) {
 		outcome := <-outCh
 
 		// Release team create lock — tasks already visible in DB, other goroutines can list.
@@ -573,13 +578,27 @@ func processNormalMessage(
 
 		appendMediaToOutbound(&outMsg, outcome.Result.Media)
 
-		deps.MsgBus.PublishOutbound(outMsg)
+		parts := []string{replyContent}
+		if !streaming && len(outMsg.Media) == 0 {
+			parts = channels.SplitFinalMessages(replyContent, chatBehavior.FinalSplit)
+		}
+		for i, part := range parts {
+			msgPart := outMsg
+			msgPart.Content = part
+			if i > 0 {
+				msgPart.Metadata = channels.CopyFollowupRoutingMeta(meta)
+				if chatBehavior.FinalSplit.DelayMs > 0 {
+					time.Sleep(time.Duration(chatBehavior.FinalSplit.DelayMs) * time.Millisecond)
+				}
+			}
+			deps.MsgBus.PublishOutbound(msgPart)
+		}
 
 		// Auto-set followup when lead agent replies on a real channel with in_progress tasks.
 		if deps.TeamStore != nil && channel != tools.ChannelSystem && channel != tools.ChannelTeammate && channel != tools.ChannelDashboard {
 			go autoSetFollowup(ctx, deps.TeamStore, deps.AgentStore, agentKey, channel, chatID, replyContent)
 		}
-	}(agentID, msg.Channel, msg.ChatID, sessionKey, runID, peerKind, msg.Content, outMeta, blockReply, ptd, msg.TenantID, agentLoop.UUID(), agentLoop.OtherConfig())
+	}(agentID, msg.Channel, msg.ChatID, sessionKey, runID, peerKind, msg.Content, outMeta, blockReply, chatBehavior, enableStream, ptd, msg.TenantID, agentLoop.UUID(), agentLoop.OtherConfig())
 }
 
 // isSafeBitrixEntityToken validates a webhook-sourced Bitrix entity token before

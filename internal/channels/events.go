@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -36,6 +37,10 @@ func (m *Manager) HandleAgentEvent(eventType, runID string, payload any) {
 	// channels that might serve multiple tenants.
 	if rc.TenantID != uuid.Nil {
 		ctx = store.WithTenantID(ctx, rc.TenantID)
+	}
+
+	if eventType == protocol.AgentEventRunStarted {
+		m.scheduleQuickAck(rc)
 	}
 
 	// Forward to StreamingChannel (only when streaming is enabled for this run).
@@ -284,6 +289,11 @@ func (m *Manager) HandleAgentEvent(eventType, runID string, payload any) {
 			return // streaming already delivered via chunks
 		}
 
+		m.cancelQuickAck(rc)
+		rc.mu.Lock()
+		rc.blockReplySent = true
+		rc.mu.Unlock()
+
 		// Build outbound metadata: copy routing fields but strip reply_to_message_id
 		// (block replies are standalone) and placeholder_key (reserve for final message).
 		// feishu_reply_target_id MUST be preserved so intermediate block replies for
@@ -354,8 +364,57 @@ func (m *Manager) HandleAgentEvent(eventType, runID string, payload any) {
 
 	// Clean up on terminal events
 	if eventType == protocol.AgentEventRunCompleted || eventType == protocol.AgentEventRunFailed || eventType == protocol.AgentEventRunCancelled {
+		m.cancelQuickAck(rc)
 		m.runs.Delete(runID)
 	}
+}
+
+func (m *Manager) scheduleQuickAck(rc *RunContext) {
+	if !ShouldSendQuickAck(rc.ChatBehavior, rc.Streaming) {
+		return
+	}
+	delay := time.Duration(rc.ChatBehavior.QuickAck.MinDelayMs) * time.Millisecond
+	if delay <= 0 {
+		m.sendQuickAck(rc)
+		return
+	}
+	rc.mu.Lock()
+	if rc.ackTimer == nil && !rc.ackSent && !rc.blockReplySent {
+		rc.ackTimer = time.AfterFunc(delay, func() {
+			m.sendQuickAck(rc)
+		})
+	}
+	rc.mu.Unlock()
+}
+
+func (m *Manager) cancelQuickAck(rc *RunContext) {
+	rc.mu.Lock()
+	rc.ackCancelled = true
+	if rc.ackTimer != nil {
+		rc.ackTimer.Stop()
+		rc.ackTimer = nil
+	}
+	rc.mu.Unlock()
+}
+
+func (m *Manager) sendQuickAck(rc *RunContext) {
+	rc.mu.Lock()
+	if rc.ackCancelled || rc.ackSent || rc.blockReplySent || !ShouldSendQuickAck(rc.ChatBehavior, rc.Streaming) || len(rc.ChatBehavior.QuickAck.Templates) == 0 {
+		rc.mu.Unlock()
+		return
+	}
+	content := rc.ChatBehavior.QuickAck.Templates[0]
+	rc.ackSent = true
+	rc.ackTimer = nil
+	rc.mu.Unlock()
+
+	m.bus.PublishOutbound(bus.OutboundMessage{
+		Channel:  rc.ChannelName,
+		ChatID:   rc.ChatID,
+		Content:  content,
+		Metadata: copyRoutingMeta(rc.Metadata),
+		TenantID: rc.TenantID,
+	})
 }
 
 // extractPayloadString extracts a string field from a payload (map[string]string or map[string]interface{}).
@@ -370,7 +429,6 @@ func extractPayloadString(payload any, key string) string {
 	}
 	return ""
 }
-
 
 // toolStatusMap maps builtin tool names to user-friendly status messages.
 var toolStatusMap = map[string]string{
@@ -400,8 +458,8 @@ var toolStatusMap = map[string]string{
 	// Browser
 	"browser": "🌐 Browsing...",
 	// Delegation & teams
-	"spawn":        "👥 Delegating task...",
-	"team_tasks":   "📋 Managing team tasks...",
+	"spawn":      "👥 Delegating task...",
+	"team_tasks": "📋 Managing team tasks...",
 	// Sessions
 	"sessions_list":    "📋 Listing sessions...",
 	"session_status":   "📋 Checking session...",

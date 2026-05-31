@@ -592,6 +592,42 @@ CREATE INDEX IF NOT EXISTS idx_traces_tenant ON traces(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_traces_tenant_time ON traces(tenant_id, created_at DESC);
 
 -- ============================================================
+-- Table: run_timeline_items
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS run_timeline_items (
+    id           TEXT NOT NULL PRIMARY KEY,
+    tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    run_id       TEXT NOT NULL,
+    session_key  TEXT NOT NULL,
+    agent_id     TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    user_id      TEXT,
+    channel      TEXT,
+    chat_id      TEXT,
+    seq          INTEGER NOT NULL,
+    item_type    TEXT NOT NULL,
+    status       TEXT,
+    title        TEXT,
+    preview      TEXT,
+    content      TEXT NOT NULL DEFAULT '',
+    tool_name    TEXT,
+    tool_call_id TEXT,
+    trace_id     TEXT REFERENCES traces(id) ON DELETE SET NULL,
+    span_id      TEXT REFERENCES spans(id) ON DELETE SET NULL,
+    metadata     TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (tenant_id, run_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_timeline_run_seq
+    ON run_timeline_items (tenant_id, run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_run_timeline_session_time
+    ON run_timeline_items (tenant_id, session_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_run_timeline_trace
+    ON run_timeline_items (tenant_id, trace_id)
+    WHERE trace_id IS NOT NULL;
+
+-- ============================================================
 -- Table: spans
 -- ============================================================
 

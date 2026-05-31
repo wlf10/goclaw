@@ -378,6 +378,9 @@ func (c *Channel) ReasoningStreamEnabled() bool {
 // BlockReplyEnabled returns the per-channel block_reply override (nil = inherit gateway default).
 func (c *Channel) BlockReplyEnabled() *bool { return c.config.BlockReply }
 
+// ChatBehaviorConfig returns the per-channel chat_behavior override.
+func (c *Channel) ChatBehaviorConfig() *config.ChatBehaviorConfig { return c.config.ChatBehavior }
+
 // SetPendingCompaction configures LLM-based auto-compaction for pending messages.
 func (c *Channel) SetPendingCompaction(cfg *channels.CompactionConfig) {
 	if gh := c.GroupHistory(); gh != nil {

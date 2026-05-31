@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -36,7 +37,12 @@ type RunContext struct {
 	Streaming         bool              // whether run uses streaming (to avoid double-delivery of block replies)
 	BlockReplyEnabled bool              // whether block.reply delivery is enabled for this run (resolved at RegisterRun time)
 	ToolStatusEnabled bool              // whether tool name shows in streaming preview during tool execution
+	ChatBehavior      ResolvedChatBehavior
 	mu                sync.Mutex
+	ackTimer          *time.Timer
+	ackSent           bool
+	ackCancelled      bool
+	blockReplySent    bool
 	streamBuffer      string        // accumulated streaming text (chunks are deltas)
 	inToolPhase       bool          // true after tool.call, reset on next chunk (new LLM iteration)
 	stream            ChannelStream // per-run stream handle (replaces per-chat sync.Map in channel impls)

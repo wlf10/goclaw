@@ -1,12 +1,22 @@
 package channels
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+
+	"github.com/nextlevelbuilder/goclaw/internal/config"
+)
 
 // --- Run tracking for streaming/reaction event forwarding ---
 
 // RegisterRun associates a run ID with a channel context so agent events
 // (chunks, tool calls, completion) can be forwarded to the originating channel.
 func (m *Manager) RegisterRun(runID, channelName, chatID, messageID string, metadata map[string]string, tenantID uuid.UUID, streaming, blockReply, toolStatus bool) {
+	m.RegisterRunWithBehavior(runID, channelName, chatID, messageID, metadata, tenantID, streaming, blockReply, toolStatus, ResolvedChatBehavior{})
+}
+
+// RegisterRunWithBehavior associates a run ID with channel context and
+// resolved delivery behavior so event handlers do not read mutable config mid-run.
+func (m *Manager) RegisterRunWithBehavior(runID, channelName, chatID, messageID string, metadata map[string]string, tenantID uuid.UUID, streaming, blockReply, toolStatus bool, chatBehavior ResolvedChatBehavior) {
 	m.runs.Store(runID, &RunContext{
 		ChannelName:       channelName,
 		ChatID:            chatID,
@@ -16,12 +26,17 @@ func (m *Manager) RegisterRun(runID, channelName, chatID, messageID string, meta
 		Streaming:         streaming,
 		BlockReplyEnabled: blockReply,
 		ToolStatusEnabled: toolStatus,
+		ChatBehavior:      chatBehavior,
 	})
 }
 
 // UnregisterRun removes a run tracking entry.
 func (m *Manager) UnregisterRun(runID string) {
-	m.runs.Delete(runID)
+	if val, ok := m.runs.LoadAndDelete(runID); ok {
+		if rc, ok := val.(*RunContext); ok {
+			m.cancelQuickAck(rc)
+		}
+	}
 }
 
 // IsStreamingChannel checks if a named channel implements StreamingChannel
@@ -55,4 +70,18 @@ func (m *Manager) ResolveBlockReply(channelName string, globalDefault *bool) boo
 		}
 	}
 	return globalDefault != nil && *globalDefault
+}
+
+// ResolveChatBehavior checks per-channel override, then falls back to gateway config.
+func (m *Manager) ResolveChatBehavior(channelName string, globalDefault *config.ChatBehaviorConfig) ResolvedChatBehavior {
+	var override *config.ChatBehaviorConfig
+	m.mu.RLock()
+	ch, exists := m.channels[channelName]
+	m.mu.RUnlock()
+	if exists {
+		if bc, ok := ch.(ChatBehaviorChannel); ok {
+			override = bc.ChatBehaviorConfig()
+		}
+	}
+	return ResolveChatBehavior(globalDefault, override)
 }

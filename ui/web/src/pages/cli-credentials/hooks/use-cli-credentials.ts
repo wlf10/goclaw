@@ -10,6 +10,32 @@ export type { SecureCLIBinary, CLICredentialInput, CLIPreset, CLIAgentGrant, CLI
 const QUERY_KEY = ["cliCredentials"] as const;
 const PRESETS_KEY = ["cliCredentials", "presets"] as const;
 
+type RawCLIPreset = Partial<Omit<CLIPreset, "env_vars" | "deny_args" | "deny_verbose">> & {
+  env_vars?: CLIPreset["env_vars"] | null;
+  deny_args?: string[] | null;
+  deny_verbose?: string[] | null;
+};
+
+export function normalizeCliPreset(raw: RawCLIPreset | null | undefined): CLIPreset {
+  return {
+    binary_name: raw?.binary_name ?? "",
+    description: raw?.description ?? "",
+    env_vars: Array.isArray(raw?.env_vars) ? raw.env_vars : [],
+    deny_args: Array.isArray(raw?.deny_args) ? raw.deny_args : [],
+    deny_verbose: Array.isArray(raw?.deny_verbose) ? raw.deny_verbose : [],
+    timeout: typeof raw?.timeout === "number" ? raw.timeout : 30,
+    tips: raw?.tips ?? "",
+    ...(raw?.adapter_name ? { adapter_name: raw.adapter_name } : {}),
+  };
+}
+
+export function normalizeCliPresets(raw: Record<string, RawCLIPreset | null> | null | undefined): Record<string, CLIPreset> {
+  if (!raw) return {};
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, preset]) => [key, normalizeCliPreset(preset)]),
+  );
+}
+
 export function useCliCredentials() {
   const http = useHttp();
   const queryClient = useQueryClient();
@@ -85,8 +111,8 @@ export function useCliCredentialPresets() {
   const { data, isLoading } = useQuery({
     queryKey: PRESETS_KEY,
     queryFn: async () => {
-      const res = await http.get<{ presets: Record<string, CLIPreset> }>("/v1/cli-credentials/presets");
-      return res.presets ?? {};
+      const res = await http.get<{ presets: Record<string, RawCLIPreset | null> }>("/v1/cli-credentials/presets");
+      return normalizeCliPresets(res.presets);
     },
     staleTime: 5 * 60 * 1000,
   });

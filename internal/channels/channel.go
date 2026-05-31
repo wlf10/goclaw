@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
+	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
@@ -162,6 +163,12 @@ type ChannelDestroyer interface {
 // the gateway-level block_reply setting. Returns nil to inherit the gateway default.
 type BlockReplyChannel interface {
 	BlockReplyEnabled() *bool
+}
+
+// ChatBehaviorChannel is optionally implemented by channels that override
+// gateway-level human-like delivery behavior. Nil means inherit the gateway default.
+type ChatBehaviorChannel interface {
+	ChatBehaviorConfig() *config.ChatBehaviorConfig
 }
 
 // WebhookChannel extends Channel with an HTTP handler that can be mounted

@@ -227,5 +227,13 @@
     "skippedSystem": "已跳过 {{count}} 个系统 Skill",
     "customOnlyReason": "此操作仅适用于自定义 Skill",
     "noAgentsReason": "暂无当前 Agent"
+  },
+  "export": {
+    "format": "归档格式",
+    "download": "下载",
+    "downloadSelected": "下载所选项",
+    "downloading": "下载中...",
+    "downloadSuccess": "已开始下载",
+    "downloadFailed": "下载失败"
   }
 }

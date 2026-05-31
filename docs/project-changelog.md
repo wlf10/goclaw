@@ -11,7 +11,7 @@ Significant changes, features, and fixes in reverse chronological order.
 **New**
 
 - Added opt-in per-channel passive memory extraction from pending group buffers, with scheduled/manual runs, redaction before LLM extraction, review queue items, and deterministic channel memory source IDs.
-- Added PostgreSQL migration `000075` and SQLite schema version `44` for `channel_memory_extraction_runs` and `channel_memory_extraction_items`.
+- Added PostgreSQL migration `000076` and SQLite schema version `45` for `channel_memory_extraction_runs` and `channel_memory_extraction_items`.
 - Added tenant-admin HTTP APIs and channel detail UI controls for settings, manual run, last run status, and approve/reject/delete review actions.
 
 **Security**
@@ -20,12 +20,14 @@ Significant changes, features, and fixes in reverse chronological order.
 - Review mode is on by default; approved items write to `episodic_summaries` with `source_type='channel'` and then enter the existing KG consolidation event path.
 - Delete removes the review item and associated episodic summary when present. Existing KG nodes created before deletion may require later dedup/cleanup; raw channel messages are not copied into the new extraction tables.
 
+---
+
 ### Channel context admin surface (issue #66)
 
 **New**
 
 - Added channel context APIs under `/v1/channels/instances/{id}/contexts` for stored channel/group contexts, members, and effective MCP/Secure CLI capability matrix.
-- Added tenant-scoped context grants and context credentials for MCP servers and Secure CLI binaries, with PostgreSQL migration `000074` and SQLite schema version `43`.
+- Added tenant-scoped context grants and context credentials for MCP servers and Secure CLI binaries, with PostgreSQL migration `000075` and SQLite schema version `44`.
 - Runtime tool execution now carries `ChannelContextScope`; MCP and Secure CLI resolution apply context grants/credentials before user credential overrides.
 - Web dashboard channel detail page now has a `Contexts` tab showing contexts, stored members, effective granted tools, and scoped credential presence without exposing secret values.
 
@@ -34,6 +36,275 @@ Significant changes, features, and fixes in reverse chronological order.
 - Context capability write APIs use tenant-admin checks.
 - Credential APIs return presence/metadata only; raw MCP API keys, headers/env values, and Secure CLI env values are never serialized.
 - MCP grant-check cache key includes channel scope so scoped grants do not leak across channel contexts.
+
+---
+
+### Group chat context in agent prompts
+
+**Features**
+
+- Added `## Current Chat Context` to agent system prompts for channel runs. Group chats now show platform, chat type, optional group name, group ID, and sender identity when metadata is available.
+- Preserved existing `<current_reply_target>` routing guard and group reply guidance while making the human-readable chat context explicit.
+- Added best-effort Discord channel title forwarding from the local `discordgo.State` cache. No hot-path REST lookup or schema change.
+
+**Fixes**
+
+- Normalized WhatsApp `user_name` metadata into the existing sender-name resolver so WhatsApp group prompts can include sender display names.
+- Sanitized group titles and sender display names before prompt rendering to strip quotes/control whitespace and cap length.
+
+**Tests**
+
+- Added prompt contract coverage for group title, missing title, direct chats, and prompt-injection-shaped metadata.
+- Added Discord cached-channel-title and sender-name resolver coverage.
+
+---
+
+### Archived run timeline (issue #76)
+
+Adds persisted run archive timeline entries for session detail review.
+
+**New**
+
+- `run_timeline_items` schema for PostgreSQL and SQLite/Lite, with tenant/run
+  sequence uniqueness and session/run indexes.
+- Best-effort agent event recorder for `activity`, `assistant.message`,
+  `tool.call`, `tool.result`, and `run.status` entries.
+- HTTP `GET /v1/runs/{runID}/timeline` and WS `run.timeline.get` read APIs,
+  including tenant/user visibility filtering.
+- Web session detail timeline panel using the WS API and localized labels.
+
+**Security**
+
+- Tool arguments/results are persisted as bounded previews only.
+- Raw thinking/reasoning is not persisted.
+- Non-admin reads are filtered to the connected/effective user.
+
+**Tests**
+
+- Added store coverage for PG and SQLite, recorder tests, HTTP/WS API tests,
+  permission classification coverage, and UI display mapping tests.
+
+---
+
+### Shell security group disabled state persistence (issue #75)
+
+**Fixes**
+
+- Added regression coverage proving `config.patch` preserves explicit
+  `tools.shellDenyGroups` values set to `false` in memory, saved config JSON,
+  and follow-up `config.get` responses.
+- Aligned Claude CLI and ACP provider runtime registration with the saved
+  shell deny-group config. Provider-side deny patterns now derive from
+  `tools.ResolveDenyPatterns(cfg.Tools.ShellDenyGroups)` instead of static
+  defaults, so disabled groups stay disabled after reload/provider registration.
+- Re-registers existing Claude CLI/ACP provider runtimes on config changes so
+  settings-page saves affect runtime enforcement without restart.
+- Uses locked shell deny-group snapshots before HTTP provider registration, so
+  provider creation cannot race config reload while reading the override map.
+- Kept missing shell deny-group keys as inherited defaults; only explicit
+  `false` disables a group.
+
+**Tests**
+
+- `go test ./internal/gateway/methods -run 'TestConfigPatchPersists(InboundDebounceMs|ShellDenyGroupsFalse)' -count=1`
+- `go test ./internal/providers -run 'TestGenerateHookScript' -count=1`
+- `go test ./internal/providers/... -run 'ClaudeCLI|ACP|DenyPatterns|ToolBridge' -count=1`
+- `go test -race ./cmd -run 'TestShellDenyGroupsConfigReload_.*|TestConfiguredShellDenyPatternsDropsDisabledPackageInstall' -count=1`
+- `go vet ./...`
+- `go build ./...`
+- `go build -tags sqliteonly ./...`
+
+---
+
+### Local-first document text extraction adapter (read_document privacy optimization)
+
+Adds optional local extraction pipeline to the `read_document` tool, allowing
+PDF and DOCX parsing via `pdftotext` (poppler-utils) and `pandoc` before
+falling back to cloud vision. Reduces token costs and improves privacy for
+document analysis when local binaries are available.
+
+**New**
+
+- `DocumentParser` interface + `LocalExtractParser` implementation in
+  `internal/tools/document_parser.go`. Handles PDF (`pdftotext`) and DOCX
+  (`pandoc`) with no-shell subprocess exec, binary detection, process-group
+  timeout kill (SIGTERM → 3s grace → SIGKILL), minimal subprocess environment,
+  and 500KB output limit.
+- `DocumentParserConfig` in `internal/config/config_channels.go` under `tools` section:
+  `local_first` (opt-in, default false), `max_pages` (default 200), `timeout_sec`
+  (default 30), `min_text_len` (default 16). Config is read at tool construction;
+  binary availability re-checked per call for runtime installs.
+- Integration in `read_document` tool: `SetLocalParser()` wired at gateway
+  startup (`cmd/gateway_managed.go`). On a clean extraction hit, returns text
+  with no LLM usage (zero tokens, no Provider/Model/Usage fields). Any miss
+  (disabled, unsupported mime, missing binary, timeout, empty output, exec
+  error) transparently falls back to the cloud vision chain unchanged.
+- Security: subprocess exec uses `exec.Command` (no shell), docPath validated
+  at the exec boundary, extracted text treated as untrusted, minimal env
+  (no gateway secrets), `pandoc --sandbox` for DOCX parsing.
+
+**Requirements**
+
+- Requires `pdftotext` and `pandoc` on PATH for local extraction. Present in:
+  - Docker `full` variant (`ghcr.io/nextlevelbuilder/goclaw:vX.Y.Z-full`)
+  - Builds with `-tags "" -X main.enableFullSkills=true` (when available)
+- Desktop Lite edition: local extraction wired but not user-configurable
+  (remains in code for future mobile/CLI usage; server/Docker only now).
+
+**Docs**
+
+- `docs/03-tools-system.md` § 5 — new `document_parser` config block with all
+  four fields, defaults, and fallback semantics.
+- `docs/03-tools-system.md` § 4 (Media Reading) — updated `read_document`
+  description to mention local-first extraction option.
+
+**Testing**
+
+- Behavior unchanged when `local_first: false` (default).
+- Verify local extraction when enabled: create test PDF/DOCX, enable config,
+  inspect tool output for zero-token response vs cloud vision (Gemini, etc.).
+
+---
+
+### Skill selected download export (issue #80)
+
+**Features**
+
+- Extended `GET /v1/skills/export` with selected skill IDs via repeated `id`
+  or comma-separated `ids`, while preserving the no-selection full export as
+  tenant custom-skill only by default.
+- Added archive format selection: `tar.gz`, `tgz` alias, and `zip`. Direct and
+  SSE download paths now return matching archive filenames and content types.
+- Selected exports can include system/core skills explicitly without changing
+  full backup defaults.
+- Archive output now preserves skill directory content such as `SKILL.md`,
+  `references/`, `scripts/`, and `assets/`, while skipping unsafe paths and
+  symlinks. Nested files named `metadata.json` or `grants.jsonl` remain
+  exportable; only generated root archive artifacts are skipped.
+- Archive assembly streams file contents into the writer and revalidates opened
+  files against the resolved skill root to avoid large in-memory reads and
+  symlink-swap escapes.
+- Web Skills page now supports Download from the detail dialog and Download
+  selected from the bulk toolbar, with format selection and EN/VI/ZH labels.
+
+**Tests**
+
+- Added backend coverage for export request parsing, archive writers, safe
+  directory walking, selected system/custom scope, and full export defaults.
+- Added web helper coverage for selected export URLs and archive filenames.
+
+---
+
+### Discord thread history and attachment backfill (issue #69)
+
+**Fixes**
+
+- Discord thread mentions now fetch recent thread messages before the triggering mention and prepend them as context for the agent run.
+- Prior thread image and document attachments are downloaded immediately and passed through the existing inbound media pipeline, so `read_image` and `read_document` can use files posted earlier in the thread.
+- Backfill is limited to addressed Discord threads, 25 prior messages, 15 attachments, 5 MB per backfilled file, and a 30-second timeout. Missing Discord history permission or REST failures fall back to the current message without crashing.
+
+---
+
+### Telegram voice transcription and read_audio fallback (issue #85)
+
+**Fixes**
+
+- Telegram voice/audio STT now preserves Telegram's detected MIME type, including `audio/ogg; codecs=opus`, instead of forcing every STT request to `audio/ogg`.
+- Telegram STT now resolves channel-scoped legacy proxy overrides by platform type `telegram`, so DB channel instances with custom names still select the Telegram override.
+- `read_audio` no longer sends unsupported audio routes as `providers.ImageContent`; unsupported provider/model combinations now fail closed with an audio-specific error that names supported routes.
+
+**Tests**
+
+- Added Telegram STT regression coverage for channel-type override selection and MIME preservation.
+- Added `read_audio` regression coverage proving unsupported providers are not called through chat/image fallback.
+
+---
+
+### RapidAPI cron SecureCLI diagnostics (issue #74)
+
+**Fixes**
+
+- Added a built-in `rapidapi` SecureCLI preset with required `RAPIDAPI_KEY`, 60s timeout, and verbose/debug flag denials.
+- Credentialed exec now validates required preset env keys before binary resolution, so missing RapidAPI credentials return a GoClaw diagnostic instead of downstream `RAPIDAPI_KEY required`.
+- Added safe SecureCLI env diagnostics that log env key names/count context only, never credential values.
+- Added `RAPIDAPI_KEY` to fall-through exec env scrubbing.
+
+**Tests**
+
+- Added RapidAPI preset contract and deny-pattern coverage.
+- Added credentialed exec regressions for missing RapidAPI env and successful direct exec with injected `RAPIDAPI_KEY`.
+
+---
+
+### Sandbox tenant workspace isolation (issue #68)
+
+**Security**
+
+- Scoped Docker sandbox workspace mounts to the effective tenant/session workspace from tool context instead of the global workspace root.
+- Kept the in-container UX stable: the effective workspace is mounted at `/workspace`.
+- Made Docker sandbox reuse workspace/config-aware so shared or agent-scoped containers cannot cross workspace boundaries.
+- Added fail-closed behavior when tenant-scoped sandbox execution has no effective workspace.
+
+**Tests**
+
+- Added unit coverage for effective sandbox workspace selection, `/workspace` cwd mapping, normal and credentialed sandbox exec, file-tool sandbox bridge mount selection, and Docker cache-key isolation.
+
+---
+
+### Human-like channel delivery MVP (issue #67)
+
+**New**
+
+- Added `gateway.chat_behavior` runtime config for global quick acknowledgement and safe final multi-message splitting.
+- Added per-channel `chat_behavior` override support for channel instances that already participate in channel delivery settings.
+- Quick acknowledgements are emitted only for non-streaming channel runs and are cancelled when a block reply or terminal event arrives.
+- Final splitting applies only to non-streaming text-only final replies; unsafe Markdown, code, tables, lists, quotes, JSON, and URL-only paragraphs stay as one message.
+- Added `chat_behavior.preview` RPC plus dashboard controls and per-channel override fields.
+
+**Validation**
+
+- Added Go coverage for config resolution, preview, conservative splitting, and non-streaming quick acknowledgement delivery.
+- Verified focused Go packages, both Go builds, `go vet`, web Vitest, web production build, and `git diff --check`.
+
+**Out of scope**
+
+- No archive/timeline storage, renderer, share/export, or interleaved run history changes. Those remain issue #76 scope.
+
+---
+
+### GitHub Releases update scratch dir fallback (issue #94)
+
+- Changed GitHub Releases package updates to prefer `{runtimeDir}/tmp` for
+  scratch extraction and staging, instead of deriving tmp from a release or
+  binary directory.
+- If `packages.scratch_dir` is configured but cannot be created, the update
+  executor now logs a warning and falls back to runtime tmp before failing.
+- Added regression tests for default scratch-dir selection and fallback from an
+  unusable configured scratch path.
+
+---
+
+### CLI Credentials git preset null-env crash (issue #93)
+
+**Fixes**
+
+- Stopped `/v1/cli-credentials/presets` from returning nullable preset arrays
+  for adapter-managed CLIs such as `git`; frontend now also normalizes older
+  `null` payloads defensively.
+- Allowed the `git` preset to create a SecureCLI binary without legacy env
+  vars and persisted its `adapter_name=git`, so the PAT/SSH user credential
+  flow activates after creation.
+- Guarded the preset env-var renderer against nullish `env_vars` to keep the
+  Runtime & Packages → CLI Credentials tab renderable.
+
+**Tests**
+
+- Added backend regression coverage for stable preset arrays and git preset
+  creation without legacy env.
+- Added frontend normalization coverage for nullable adapter-managed preset
+  arrays.
+
+---
 
 ## 2026-05-28
 

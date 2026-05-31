@@ -71,6 +71,16 @@ The consumer routes system messages based on sender ID prefixes:
 
 Normal channel messages pass through the shared inbound debouncer before agent execution. `gateway.inbound_debounce_ms` merges rapid text messages from the same `channel:chatID:senderID:agentID`; `0` means no debounce and positive values set the wait window. Agents can override the global value with `other_config.inbound_debounce_ms`; unset inherits the global config. Command/control messages such as `/stop`, `/reset`, and system escalations bypass the debouncer.
 
+### Human-like Delivery
+
+`gateway.chat_behavior` controls optional channel-only delivery polish:
+
+- `quick_ack` sends one short acknowledgement after a configurable delay, only for non-streaming channel runs.
+- `final_split` splits long final text replies into a bounded number of paragraph messages.
+- Per-channel `chat_behavior` overrides inherit the gateway config unless a field is explicitly set.
+
+Splitting is intentionally conservative. Replies containing fenced code, tables, lists, quotes, JSON/XML-ish blocks, or URL-only paragraphs remain a single message. Media replies and streaming deliveries are not split.
+
 **Multi-attachment coalescing (#63).** Messages carrying attachments do NOT bypass the debouncer — that pre-fix shortcut was the source of N-replies for one user action. Instead, when media is present the effective window is `max(configured, mediaFloor)` so multi-file uploads land in the same buffer and flush together. Three surfaces apply the same invariant:
 
 | Surface | Buffer key | Trigger |
@@ -105,6 +115,7 @@ Every channel must implement the base interface:
 | `WebhookChannel` | Webhook HTTP handler mounting | Facebook, Feishu/Lark, Pancake |
 | `ReactionChannel` | Status reactions on messages | Telegram, Slack, Feishu |
 | `BlockReplyChannel` | Override gateway block_reply setting | Discord, Feishu/Lark, Pancake, Slack, Zalo OA, Zalo Personal |
+| `ChatBehaviorChannel` | Override gateway chat_behavior setting | Bitrix24, Discord, Feishu/Lark, Pancake, Slack, Telegram, WhatsApp, Zalo OA, Zalo Personal |
 
 `BaseChannel` provides a shared implementation that all channels embed: allowlist matching, `HandleMessage()`, `CheckPolicy()`, and user ID extraction.
 
@@ -276,7 +287,7 @@ flowchart TD
     WHATSAPP_CHECK -->|Yes| DOWNLOAD
     
     DOWNLOAD --> STT_CHECK{"STT providers<br/>configured?"}
-    STT_CHECK -->|Yes| STT_CHAIN["Try providers in order:<br/>elevenlabs_scribe, proxy"]
+    STT_CHECK -->|Yes| STT_CHAIN["Try providers in order:<br/>elevenlabs, proxy"]
     STT_CHECK -->|No| LEGACY{"Legacy bridge<br/>providers?"}
     
     LEGACY -->|Yes| STT_CHAIN
@@ -298,11 +309,11 @@ flowchart TD
 
 #### Configuration & Decision Rules
 
-**Decision 2 (Conflict rule):** When `builtin_tools[stt].settings.providers[]` is present in the database, it OVERRIDES all legacy channel-specific STT configs. The legacy STT bridge (`STTProxyURL` → `proxy_stt` provider) only activates when the providers list is empty or missing.
+**Decision 2 (Conflict rule):** When `builtin_tools[stt].settings.providers[]` is present in the database, it OVERRIDES all legacy channel-specific STT configs. The legacy STT bridge (`STTProxyURL` → `proxy` provider) only activates when the providers list is empty or missing.
 
 | Setting | Behavior |
 |---------|----------|
-| `providers: ["elevenlabs_scribe", "proxy_stt"]` | Try ElevenLabs Scribe first; fall back to legacy proxy |
+| `providers: ["elevenlabs", "proxy"]` | Try ElevenLabs Scribe first; fall back to legacy proxy |
 | `providers: []` (empty) | Skip all STT; voice → `[Voice message]` fallback |
 | `providers` missing (nil) | Check for legacy bridge at startup; activate if `STTProxyURL` exists |
 
@@ -320,7 +331,7 @@ When enabled:
 
 | Channel | STT Support | Notes |
 |---------|:-:|---------|
-| **Telegram** | Yes | Uses unified chain; voice routing via `VoiceAgentID` config |
+| **Telegram** | Yes | Uses unified chain; preserves Telegram voice MIME; legacy proxy override is keyed by platform type `telegram`; voice routing via `VoiceAgentID` config |
 | **Discord** | Yes | Standard flow; no special routing |
 | **Feishu** | Yes | Standard flow; no special routing |
 | **WhatsApp** | Yes (opt-in) | Requires explicit admin approval; default OFF |
@@ -506,6 +517,7 @@ The Discord channel uses the `discordgo` library to connect via the Discord Gate
 - **Bot identity**: Fetches `@me` on startup to detect and ignore own messages
 - **Typing indicator**: 9-second keepalive while agent processes
 - **Group history**: Pending message buffer for context when mentioned
+- **Thread backfill**: When the bot is mentioned inside a Discord thread, the channel fetches up to 25 prior thread messages before the triggering message through Discord REST, prepends their text as context, and downloads up to 15 prior attachments for the same inbound media pipeline. This is thread-only, bounded to 5 MB per backfilled file with a 30-second timeout, and gracefully falls back to the current message when Discord lacks `READ_MESSAGE_HISTORY` or the REST request fails.
 
 ---
 

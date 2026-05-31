@@ -186,12 +186,13 @@ SHOULD NOT create skill when:
 - Simple tasks (< 5 tool calls)
 - User explicitly said "skip" or declined
 
-Creating: skill_manage(action="create", content="---\nname: ...\n...")
-Improving: skill_manage(action="patch", slug="...", find="...", replace="...")
+Creating: skill_manage(action="create", content="---\nname: ...\n...", files={"references/guide.md":"..."})
+Improving: skill_manage(action="patch", slug="...", find="...", replace="...", files={"references/guide.md":"..."})
 Removing: skill_manage(action="delete", slug="...")
 
 Constraints:
 - You can only manage skills you created (not system or other users' skills)
+- Use files for small text companion files. Use publish_skill or ZIP upload for full directories and binary assets.
 - Quality over quantity — one excellent skill beats five mediocre ones
 - Ask user before creating if unsure
 ```
@@ -262,7 +263,7 @@ Two paths for creating skills programmatically:
 
 | Path | Interface | Use Case |
 |------|-----------|----------|
-| `skill_manage` | Content string (SKILL.md body) | Agent creates during conversation (learning loop) |
+| `skill_manage` | Content string plus optional text companion files | Agent creates during conversation (learning loop) |
 | `publish_skill` | Directory path | Agent creates via filesystem (see [doc 16](./16-skill-publishing.md)) |
 
 Admin management via HTTP API + WebSocket RPC. Grants system controls per-agent and per-user access.
@@ -278,6 +279,8 @@ Admin management via HTTP API + WebSocket RPC. Grants system controls per-agent 
 | `content` | string | create | Full SKILL.md including YAML frontmatter |
 | `find` | string | patch | Exact text to find in current SKILL.md |
 | `replace` | string | patch | Replacement text |
+| `files` | object | no | Optional text companion files keyed by relative path, e.g. `references/guide.md` |
+| `visibility` | string | patch | Optional metadata-only visibility change when no content/files change |
 
 **Operations flow:**
 
@@ -285,24 +288,24 @@ Admin management via HTTP API + WebSocket RPC. Grants system controls per-agent 
 flowchart LR
     subgraph CREATE["action = create"]
         direction TB
-        C1["Content string"] --> C2["Size ≤ 100KB?"]
-        C2 --> C3["Security scan"]
+        C1["Content +<br/>optional files"] --> C2["Size and path<br/>validation"]
+        C2 --> C3["Security scan<br/>SKILL.md"]
         C3 --> C4["Parse frontmatter"]
         C4 --> C5["Slug validation"]
         C5 --> C6["System skill<br/>conflict check"]
-        C6 --> C7["Write SKILL.md<br/>to versioned dir"]
+        C6 --> C7["Write SKILL.md +<br/>companions"]
         C7 --> C8["DB insert<br/>(advisory lock)"]
         C8 --> C9["Auto-grant +<br/>dep scan"]
     end
 
     subgraph PATCH["action = patch"]
         direction TB
-        P1["slug + find/replace"] --> P2["Exists?<br/>System skill?"]
+        P1["slug + find/replace<br/>and/or files"] --> P2["Exists?<br/>System skill?"]
         P2 --> P3["Ownership check"]
-        P3 --> P4["Read current +<br/>apply patch"]
-        P4 --> P5["Security scan<br/>patched content"]
+        P3 --> P4["Read current +<br/>overlay files"]
+        P4 --> P5["Security scan +<br/>path validation"]
         P5 --> P6["New version<br/>(advisory lock)"]
-        P6 --> P7["Copy companions +<br/>DB update"]
+        P6 --> P7["Write companions +<br/>DB update"]
     end
 
     subgraph DELETE["action = delete"]
@@ -324,8 +327,8 @@ Directory-based alternative. See [16 - Skill Publishing System](./16-skill-publi
 
 | Dimension | `skill_manage` | `publish_skill` |
 |-----------|---------------|-----------------|
-| Input | Content string | Directory path |
-| Files | SKILL.md only (patch copies companions) | Entire directory (scripts, assets, etc.) |
+| Input | SKILL.md content plus optional files map | Directory path |
+| Files | SKILL.md plus direct text companion files; patch copies existing companions forward | Entire directory (scripts, assets, etc.) |
 | Dependency scan | Yes (warn only) | Yes (warn only) |
 | Auto-grant | Yes | Yes |
 | Skill creation guidance | Yes (skill_evolve prompt) | No (uses skill-creator core skill) |
@@ -448,9 +451,9 @@ System skills (`is_system=true`) cannot be modified through any path.
 | Protection | Implementation |
 |------------|----------------|
 | Symlink detection | `filepath.WalkDir` + `d.Type()&os.ModeSymlink` check |
-| Path traversal | `strings.Contains(rel, "..")` rejection |
+| Path traversal | Direct `skill_manage(files=...)` payload rejects absolute paths, Windows drive paths, null bytes, `..`, `SKILL.md`, dotfiles/dotdirs, and system artifacts |
 | Content size limit | 100KB max for SKILL.md content |
-| Companion size limit | Configurable per ZIP upload; default 20MB, clamped to 1-500MB |
+| Companion size limit | Direct `skill_manage(files=...)` text files are capped at 2MB each. Existing companions copy forward with the 20MB total copy limit. ZIP upload remains configurable, default 20MB and clamped to 1-500MB |
 | Soft-delete | Files moved to `.trash/`, never hard-deleted |
 
 ---

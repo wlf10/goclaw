@@ -16,7 +16,7 @@ var schemaSQL string
 
 // SchemaVersion is the current SQLite schema version.
 // Bump this when adding new migration steps below.
-const SchemaVersion = 44
+const SchemaVersion = 45
 
 // migrations maps version → SQL to apply when upgrading FROM that version.
 // schema.sql always represents the LATEST full schema (for fresh DBs).
@@ -772,10 +772,41 @@ CREATE INDEX IF NOT EXISTS idx_browser_cookies_expires_at
 	40: `ALTER TABLE secure_cli_user_credentials ADD COLUMN host_scope TEXT;`,
 	// Version 41 → 42: credential adapter framework — adapter_name on binaries.
 	41: `ALTER TABLE secure_cli_binaries ADD COLUMN adapter_name TEXT;`,
-	// Version 42 → 43: channel-context MCP and Secure CLI grants/credentials.
-	42: addChannelContextCapabilityTables,
-	// Version 43 → 44: passive channel memory extraction run and review queue.
-	43: addChannelMemoryExtractionTables,
+	// Version 42 → 43: archived agent run timeline.
+	42: `CREATE TABLE IF NOT EXISTS run_timeline_items (
+    id           TEXT NOT NULL PRIMARY KEY,
+    tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    run_id       TEXT NOT NULL,
+    session_key  TEXT NOT NULL,
+    agent_id     TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    user_id      TEXT,
+    channel      TEXT,
+    chat_id      TEXT,
+    seq          INTEGER NOT NULL,
+    item_type    TEXT NOT NULL,
+    status       TEXT,
+    title        TEXT,
+    preview      TEXT,
+    content      TEXT NOT NULL DEFAULT '',
+    tool_name    TEXT,
+    tool_call_id TEXT,
+    trace_id     TEXT REFERENCES traces(id) ON DELETE SET NULL,
+    span_id      TEXT REFERENCES spans(id) ON DELETE SET NULL,
+    metadata     TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (tenant_id, run_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_run_timeline_run_seq
+    ON run_timeline_items (tenant_id, run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_run_timeline_session_time
+    ON run_timeline_items (tenant_id, session_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_run_timeline_trace
+    ON run_timeline_items (tenant_id, trace_id)
+    WHERE trace_id IS NOT NULL;`,
+	// Version 43 → 44: channel-context MCP and Secure CLI grants/credentials.
+	43: addChannelContextCapabilityTables,
+	// Version 44 → 45: passive channel memory extraction run and review queue.
+	44: addChannelMemoryExtractionTables,
 }
 
 const addChannelMemoryExtractionTables = `

@@ -227,5 +227,13 @@
     "skippedSystem": "Bỏ qua {{count}} skill hệ thống",
     "customOnlyReason": "Thao tác này chỉ áp dụng cho custom skill",
     "noAgentsReason": "Chưa có agent hiện tại"
+  },
+  "export": {
+    "format": "Định dạng archive",
+    "download": "Tải xuống",
+    "downloadSelected": "Tải xuống mục đã chọn",
+    "downloading": "Đang tải...",
+    "downloadSuccess": "Đã bắt đầu tải xuống",
+    "downloadFailed": "Tải xuống thất bại"
   }
 }

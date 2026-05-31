@@ -160,7 +160,7 @@ jobs:
           CGO_ENABLED=0 go build -tags embedui \
             -ldflags="-s -w -X github.com/nextlevelbuilder/goclaw/cmd.Version=${VERSION}" \
             -o goclaw .
-          tar -czf "goclaw-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" goclaw migrations/
+          tar -czf "goclaw-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" goclaw migrations/ skills/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -333,7 +333,7 @@ jobs:
 
   deploy_zuey_beta:
     needs: [beta_version, publish_release]
-    if: needs.beta_version.outputs.released == 'true' && github.repository == 'digitopvn/goclaw'
+    if: needs.beta_version.outputs.released == 'true' && github.repository == 'digitopvn/goclaw' && github.repository != 'nextlevelbuilder/goclaw'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
