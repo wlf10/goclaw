@@ -6,6 +6,25 @@ Significant changes, features, and fixes in reverse chronological order.
 
 ## 2026-05-31
 
+### Agent Access git credential follow-up (issue #117)
+
+**Fixes**
+
+- Replaced separate Agent Grants and Agent Credentials row actions with one
+  Agent Access dialog containing Credential and Access policy tabs, preventing
+  overlapping agent-access modals.
+- Git PAT credentials now inject GitHub-compatible Basic auth extraheaders
+  instead of Bearer headers.
+- SSH private keys are now checked with OpenSSH at save time when `ssh-keygen`
+  is available, catching keys that would later fail with `error in libcrypto`.
+
+**Security**
+
+- Git PAT redaction now includes the raw token, the base64 Basic auth payload,
+  and the full injected header value.
+
+---
+
 ### Tool-call announcements
 
 **Fixes**

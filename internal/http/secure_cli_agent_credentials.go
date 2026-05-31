@@ -161,7 +161,7 @@ func (h *SecureCLIHandler) handleSetAgentCredentials(w http.ResponseWriter, r *h
 	if !bindJSON(w, r, locale, &body) {
 		return
 	}
-	envBytes, credType, hostScope, terr := prepareTypedCredentialEnv(locale, body.typedCredentialBody)
+	envBytes, credType, hostScope, terr := prepareTypedCredentialEnv(r.Context(), locale, body.typedCredentialBody)
 	if terr != nil {
 		writeTypedCredentialError(w, terr)
 		return

@@ -7,19 +7,22 @@ function source(path: string): string {
 }
 
 describe("CLI agent credential UI wiring", () => {
-  it("exposes Agent Credentials as a distinct table action before advanced user overrides", () => {
+  it("exposes one Agent Access action before advanced user overrides", () => {
     const table = source("src/pages/cli-credentials/cli-credentials-table.tsx");
 
-    expect(table).toContain("onAgentCreds");
-    expect(table).toContain("agentCredentials.title");
-    expect(table.indexOf("onAgentCreds(item)")).toBeLessThan(table.indexOf("onUserCreds(item)"));
+    expect(table).toContain("onAgentAccess");
+    expect(table).toContain("agentAccess.title");
+    expect(table).not.toContain("onAgentCreds");
+    expect(table.indexOf("onAgentAccess(item")).toBeLessThan(table.indexOf("onUserCreds(item)"));
   });
 
-  it("mounts the Agent Credentials dialog from the panel", () => {
+  it("mounts a single Agent Access dialog from the panel", () => {
     const panel = source("src/pages/cli-credentials/cli-credentials-panel.tsx");
 
-    expect(panel).toContain("cli-agent-credentials-dialog");
-    expect(panel).toContain("CLIAgentCredentialsDialog");
-    expect(panel).toContain("agentCredsTarget");
+    expect(panel).toContain("cli-agent-access-dialog");
+    expect(panel).toContain("CLIAgentAccessDialog");
+    expect(panel).toContain("agentAccessTarget");
+    expect(panel).not.toContain("agentCredsTarget");
+    expect(panel).not.toContain("grantsTarget");
   });
 });

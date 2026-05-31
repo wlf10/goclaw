@@ -31,8 +31,8 @@ ID ambiguity: the selected agent owns the credential, and anyone allowed to use
 that agent can cause it to run git with the stored credential.
 
 1. Open **Packages → CLI Credentials**.
-2. Pick the `git` row and open **Agent Credentials**.
-3. Select the agent.
+2. Pick the `git` row and open **Agent Access**.
+3. Use the **Credential** tab to select the agent.
 4. Choose **Credential Type**: `Personal Access Token` or `SSH Private Key`.
 5. Enter **Host Scope** (required for PAT/SSH): the hostname the credential
    authenticates to.
@@ -41,6 +41,11 @@ that agent can cause it to run git with the stored credential.
    - Port included only when non-default for the scheme.
 6. Paste the token (PAT) or the unencrypted PEM body (SSH).
 7. Save.
+
+Use the **Access policy** tab in the same Agent Access dialog when you need to
+change deny args, timeout, tips, or env overrides for that agent. Agent Access
+is one dialog on purpose: policy and secret storage stay separate internally,
+but operators should manage them as one access decision.
 
 ## Advanced user overrides
 
@@ -117,9 +122,11 @@ the operation with a 401/403).
 - Injected via `GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_*` / `GIT_CONFIG_VALUE_*`
   environment variables.
 - The PAT itself goes into a value that synthesizes an `http.<remote>.extraheader`
-  config entry with `AUTHORIZATION: basic <base64(token)>`.
+  config entry with `Authorization: Basic base64("x-access-token:<token>")`.
 - **The PAT never appears on argv** — so `ps`, `/proc/<pid>/cmdline`, and
   shell-history echoes don't expose it.
+- The raw PAT, base64 payload, and full injected header are all registered with
+  the scrubber before tool output is returned to the agent.
 - The injected env vars are scoped to the spawned `git` process only; they are
   NOT inherited by goclaw, by other tools, or by sibling exec calls.
 
@@ -128,9 +135,13 @@ the operation with a 401/403).
 - The PEM key is written to an `0600`-mode tmpfile in `os.TempDir()` (per-user
   on POSIX) with a `goclaw-gitkey-*` prefix.
 - `GIT_SSH_COMMAND` is set to
-  `ssh -i <tmpfile> -F /dev/null -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`.
+  `ssh -i <tmpfile> -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new`.
 - The tmpfile is removed via `defer` on the exec wrapper. **SIGKILL of goclaw
   leaves the file orphaned** — see the Operator Notes section below.
+- SSH private keys are validated twice at save time: first with Go's SSH parser,
+  then with OpenSSH via `ssh-keygen -y -f <tmpfile>` when `ssh-keygen` is
+  available. This catches keys that would otherwise save successfully but fail
+  later with OpenSSH diagnostics such as `error in libcrypto`.
 - `StrictHostKeyChecking=accept-new` accepts unknown host keys on first
   contact (TOFU). A network attacker positioned between goclaw and the git
   host CAN capture the SSH session on the first connection. Operators should
