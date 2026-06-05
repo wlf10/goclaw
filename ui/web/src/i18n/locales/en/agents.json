@@ -815,6 +815,16 @@
       "memoryFlush": "Memory Flush",
       "memoryFlushTip": "Before compaction, the agent gets a turn to save important context to memory files. Also triggers Knowledge Graph extraction."
     },
+    "inboundDebounce": {
+      "title": "Inbound Debounce",
+      "description": "Override rapid Web Chat and channel message batching for this agent.",
+      "mode": "Mode",
+      "modeTip": "Inherit uses the global Behavior setting. Custom stores an override on this agent.",
+      "inherit": "Inherit Global",
+      "custom": "Custom",
+      "debounceMs": "Debounce (ms)",
+      "debounceMsTip": "Set 0 for no debounce; positive values merge follow-ups after that wait."
+    },
     "contextPruning": {
       "title": "Context Pruning",
       "description": "Trim old tool results to save context window",

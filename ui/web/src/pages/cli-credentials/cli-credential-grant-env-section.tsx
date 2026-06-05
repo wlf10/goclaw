@@ -6,13 +6,14 @@
  */
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, X, Eye } from "lucide-react";
+import { Plus, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/stores/use-toast-store";
 import { useHttp } from "@/hooks/use-ws";
+import type { CLIEnvEntryKind } from "@/types/cli-credential";
+import { CliCredentialGrantEnvRow } from "./cli-credential-grant-env-row";
 
 // Keep in sync with internal/crypto/env_denylist.go.
 // Backend is authoritative; this list drives inline UX warnings only.
@@ -23,7 +24,7 @@ const ENV_DENYLIST_EXACT = new Set([
   "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
   "GIT_SSH_COMMAND", "GIT_SSH", "GIT_EXEC_PATH", "GIT_CONFIG_SYSTEM",
   "SSH_AUTH_SOCK",
-  // Finding #6 additions — keep in sync with internal/crypto/env_denylist.go
+  // Shell startup and proxy/certificate variables can alter command behavior.
   "BASH_ENV", "ENV", "PROMPT_COMMAND",
   "PERL5LIB", "RUBYOPT",
   "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
@@ -36,6 +37,7 @@ const ENV_DENYLIST_PREFIXES = ["DYLD_", "GOCLAW_", "LD_", "NPM_CONFIG_"];
 export interface GrantEnvEntry {
   key: string;
   value: string;
+  kind: CLIEnvEntryKind;
   masked: boolean; // true = not yet revealed from server
 }
 
@@ -63,10 +65,10 @@ export function CliCredentialGrantEnvSection({
   const [revealing, setRevealing] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const { overrideEnabled, entries } = state;
-  // Finding #10: track blur timeout so we can cancel it on reveal/unmount.
+  // Track reveal timeout so plaintext can be cleared on reveal refresh/unmount.
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Finding #10: clear revealed plaintext from entries on component unmount.
+  // Clear revealed plaintext from entries on component unmount.
   // This is defense-in-depth — plaintext should not persist in React state beyond use.
   useEffect(() => {
     return () => {
@@ -77,7 +79,6 @@ export function CliCredentialGrantEnvSection({
         entries: state.entries.map((e) => ({ ...e, value: "", masked: e.masked })),
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setEntries = useCallback(
@@ -89,10 +90,10 @@ export function CliCredentialGrantEnvSection({
   const handleToggle = useCallback((checked: boolean) => {
     if (checked) {
       if (initialEnvSet && !revealed && entries.every((e) => e.masked)) {
-        const masked: GrantEnvEntry[] = initialEnvKeys.map((k) => ({ key: k, value: "", masked: true }));
-        onChange({ overrideEnabled: true, entries: masked.length > 0 ? masked : [{ key: "", value: "", masked: false }] });
+        const masked: GrantEnvEntry[] = initialEnvKeys.map((k) => ({ key: k, value: "", kind: "sensitive", masked: true }));
+        onChange({ overrideEnabled: true, entries: masked.length > 0 ? masked : [{ key: "", value: "", kind: "sensitive", masked: false }] });
       } else if (entries.length === 0) {
-        onChange({ overrideEnabled: true, entries: [{ key: "", value: "", masked: false }] });
+        onChange({ overrideEnabled: true, entries: [{ key: "", value: "", kind: "sensitive", masked: false }] });
       } else {
         onChange({ overrideEnabled: true, entries });
       }
@@ -105,16 +106,19 @@ export function CliCredentialGrantEnvSection({
     if (!grantId) return;
     setRevealing(true);
     try {
-      // POST — not GET (C1 red-team). Direct call, not cached by TanStack Query.
+      // POST keeps reveal out of URL/history and avoids query caching.
       const res = await http.post<{ env_vars: Record<string, string> }>(
         `/v1/cli-credentials/${binaryId}/agent-grants/${grantId}/env:reveal`,
       );
       const filled: GrantEnvEntry[] = Object.entries(res.env_vars).map(([k, v]) => ({
-        key: k, value: v, masked: false,
+        key: k,
+        value: v,
+        kind: entries.find((entry) => entry.key === k)?.kind ?? "sensitive",
+        masked: false,
       }));
       onChange({ overrideEnabled: true, entries: filled.length > 0 ? filled : entries });
       setRevealed(true);
-      // Finding #10: wipe plaintext after 30s of inactivity (defense-in-depth).
+      // Wipe plaintext after 30s of inactivity.
       if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
       blurTimeoutRef.current = setTimeout(() => {
         onChange({
@@ -133,9 +137,9 @@ export function CliCredentialGrantEnvSection({
     }
   }, [grantId, binaryId, http, onChange, entries, t]);
 
-  const addEntry = useCallback(() => setEntries((p) => [...p, { key: "", value: "", masked: false }]), [setEntries]);
+  const addEntry = useCallback(() => setEntries((p) => [...p, { key: "", value: "", kind: "sensitive", masked: false }]), [setEntries]);
   const removeEntry = useCallback((i: number) => setEntries((p) => p.filter((_, j) => j !== i)), [setEntries]);
-  const updateEntry = useCallback((i: number, f: "key" | "value", v: string) =>
+  const updateEntry = useCallback((i: number, f: "key" | "value" | "kind", v: string) =>
     setEntries((p) => p.map((e, j) => j === i ? { ...e, [f]: v, masked: false } : e)), [setEntries]);
 
   const isDenied = (k: string) => {
@@ -174,32 +178,13 @@ export function CliCredentialGrantEnvSection({
           {entries.map((entry, idx) => {
             const hasError = isDenied(entry.key) || isRejected(entry.key);
             return (
-              <div key={idx} className="flex items-start gap-2">
-                <div className="flex-1">
-                  <Input placeholder={t("grants.envVars.keyPlaceholder")} value={entry.key}
-                    onChange={(e) => updateEntry(idx, "key", e.target.value)}
-                    className={`text-base md:text-sm font-mono${hasError ? " border-destructive" : ""}`} />
-                  {hasError && (
-                    <p className="text-xs text-destructive mt-0.5">
-                      {t("grants.envVars.deniedKey", { key: entry.key })}
-                    </p>
-                  )}
-                </div>
-                <div className="flex-1">
-                  {entry.masked ? (
-                    <Input disabled value={t("grants.envVars.revealHidden")}
-                      className="text-base md:text-sm text-muted-foreground italic" />
-                  ) : (
-                    <Input type="password" autoComplete="off" placeholder={t("grants.envVars.valuePlaceholder")}
-                      value={entry.value} onChange={(e) => updateEntry(idx, "value", e.target.value)}
-                      className="text-base md:text-sm" />
-                  )}
-                </div>
-                <Button type="button" variant="ghost" size="icon" className="mt-0.5 h-8 w-8 shrink-0"
-                  onClick={() => removeEntry(idx)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
+              <CliCredentialGrantEnvRow
+                key={idx}
+                entry={entry}
+                hasError={hasError}
+                onRemove={() => removeEntry(idx)}
+                onUpdate={(field, value) => updateEntry(idx, field, value)}
+              />
             );
           })}
           {entries.length === 0 && (

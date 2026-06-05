@@ -32,6 +32,8 @@ func TestResolveDebianPackageNameAliases(t *testing.T) {
 	tests := map[string]string{
 		"pip3":       "python3-pip",
 		"github-cli": "gh",
+		"go":         "golang-go",
+		"golang":     "golang-go",
 		"ripgrep":    "ripgrep",
 		"libstdc++":  "libstdc++",
 	}

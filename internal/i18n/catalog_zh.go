@@ -77,6 +77,12 @@ func init() {
 		MsgCannotCancel:          "Agent 未处于召唤状态",
 		MsgInvalidPath:           "路径无效",
 
+		// Browser cookies
+		MsgBrowserCookieTooMany:            "单次同步请求中的浏览器 Cookie 过多",
+		MsgInvalidCookieURL:                "Cookie URL 无效",
+		MsgBrowserCookieValueTooLarge:      "Cookie 值过大",
+		MsgBrowserCookieEncryptionRequired: "尚未配置浏览器 Cookie 加密",
+
 		// Tenant backup / restore
 		MsgRestoreNewModeRejectsTenantID: "mode=new 会创建新租户；请传 tenant_slug（而非 tenant_id）作为新租户的 slug",
 
@@ -86,6 +92,21 @@ func init() {
 
 		// Provider
 		MsgProviderReqFailed: "%s：请求失败：%s",
+
+		// Usage caps / pricing
+		MsgUsageCapsListPoliciesFailed:          "无法列出 usage cap 策略",
+		MsgUsageCapPolicyValidationFailed:       "usage cap 策略验证失败",
+		MsgUsageCapPolicyManaged:                "无法修改系统托管的 usage cap 策略",
+		MsgUsageCapsDeletePolicyFailed:          "无法删除 usage cap 策略",
+		MsgUsageCapsUtilizationFailed:           "无法加载 usage cap 使用量",
+		MsgUsageCapsEventsFailed:                "无法加载 usage cap 事件",
+		MsgUsagePricingSyncOpenRouterFailed:     "无法同步 OpenRouter 价格：%s",
+		MsgUsagePricingStoreCatalogFailed:       "无法保存价格目录",
+		MsgUsagePricingListFailed:               "无法列出模型价格",
+		MsgUsagePricingProviderModelRequired:    "provider_id 和 model_id 是必填项",
+		MsgUsagePricingOverrideValidationFailed: "价格覆盖验证失败",
+		MsgUsagePricingListOverridesFailed:      "无法列出价格覆盖",
+		MsgUsagePricingDeleteOverrideFailed:     "无法删除价格覆盖",
 
 		// Unknown method
 		MsgUnknownMethod: "未知方法：%s",
@@ -200,10 +221,10 @@ func init() {
 		MsgTenantScopeRequired: "此操作需要指定租户范围",
 
 		// TTS / 声音
-		MsgTtsUnknownModel:       "未知的 tts 模型：%s",
-		MsgVoicesListFailed:      "获取声音列表失败：%s",
-		MsgTtsGeminiInvalidVoice: "无效的 Gemini 声音：%s",
-		MsgTtsGeminiSpeakerLimit: "Gemini TTS 最多支持 2 位发言人",
+		MsgTtsUnknownModel:        "未知的 tts 模型：%s",
+		MsgVoicesListFailed:       "获取声音列表失败：%s",
+		MsgTtsGeminiInvalidVoice:  "无效的 Gemini 声音：%s",
+		MsgTtsGeminiSpeakerLimit:  "Gemini TTS 最多支持 2 位发言人",
 		MsgTtsGeminiInvalidModel:  "无效的 Gemini TTS 模型：%s",
 		MsgTtsGeminiTextOnly:      "Gemini 拒绝生成音频。请尝试更简单的文本，不要翻译或添加评论。",
 		MsgTtsParamOutOfRange:     "TTS 参数 %q 的值 %v 超出范围 [%v, %v]",
@@ -285,6 +306,20 @@ func init() {
 		MsgGrantEnvValueInvalid: "无效的环境变量值：%s",
 		MsgGrantEnvTooManyKeys:  "环境变量键过多：最多 50 个",
 		MsgGrantEnvRevealLimit:  "env 查看请求超出速率限制，请稍后再试",
+
+		// Git 凭据适配器
+		MsgGitCredHostMismatch:         "已存储的 git 凭据属于 %s，但命令目标是 %s",
+		MsgGitCredNoMatch:              "没有为主机 %s 配置 git 凭据",
+		MsgGitCredUnsupportedType:      "不支持的 git 凭据类型 %q",
+		MsgGitCredTokenInvalid:         "已存储的 git token 无效或为空",
+		MsgGitCredTokenControlChar:     "已存储的 git token 包含被禁止的控制字符",
+		MsgGitCredHostUserinfoRejected:     "git URL 中嵌入的 userinfo 因含义不明被拒绝",
+		MsgGitCredSSHPassphraseUnsupported: "暂不支持带密码短语的 SSH 私钥；请先用 `ssh-keygen -p` 移除密码短语再保存",
+		MsgGitCredSSHKeyInvalid:            "SSH 私钥无效:%s",
+		MsgGitCredHostScopeRequired:        "credential_type %s 需要 host_scope",
+		MsgGitCredHostScopeInvalid:         "host_scope %q 不是有效的主机名",
+		MsgGitCredBlobMissingField:         "凭据 blob 缺少必填字段 %q",
+		MsgGitCredUnsupportedCredType:      "不支持的 credential_type %q",
 
 		// Message tool cross-target forward notice
 		MessageCrossTargetForwarded: "📤 已按请求转发至 %s:%q",

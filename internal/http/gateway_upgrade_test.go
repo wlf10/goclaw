@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeGatewayUpgradeRunner struct {
@@ -132,6 +133,30 @@ func TestGatewayUpgradeStartRejectsRunningJob(t *testing.T) {
 	}
 	if len(runner.tags) != 0 {
 		t.Fatalf("runner should not be called, got %#v", runner.tags)
+	}
+}
+
+func TestGatewayUpgradeStartAllowsStaleRunningJob(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	staleStartedAt := time.Now().UTC().Add(-gatewayUpgradeRunningMaxAge - time.Minute).Format(time.RFC3339)
+	if err := os.WriteFile(statusPath, []byte(`{"state":"running","startedAt":"`+staleStartedAt+`"}`), 0o600); err != nil {
+		t.Fatalf("write status: %v", err)
+	}
+	runner := &fakeGatewayUpgradeRunner{}
+	h := &GatewayUpgradeHandler{StatusPath: statusPath, TriggerToken: "secret-token", Runner: runner}
+	req := httptest.NewRequest(http.MethodPost, "/v1/system/gateway/upgrade", bytes.NewBufferString(`{"tag":"latest"}`))
+	req.Header.Set(gatewayUpgradeTokenHeader, "secret-token")
+	req = req.WithContext(ownerCtx(req.Context(), "gateway-stale-running-owner"))
+	w := httptest.NewRecorder()
+
+	h.handleStart(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(runner.tags) != 1 || runner.tags[0] != "latest" {
+		t.Fatalf("runner tags = %#v, want [latest]", runner.tags)
 	}
 }
 

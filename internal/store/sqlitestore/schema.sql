@@ -1208,6 +1208,7 @@ CREATE TABLE IF NOT EXISTS secure_cli_binaries (
     enabled         BOOLEAN NOT NULL DEFAULT 1,
     created_by      TEXT NOT NULL DEFAULT '',
     tenant_id       TEXT NOT NULL REFERENCES tenants(id),
+    adapter_name    TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -1501,14 +1502,16 @@ CREATE INDEX IF NOT EXISTS idx_kg_dedup_agent ON kg_dedup_candidates(agent_id, s
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS secure_cli_user_credentials (
-    id            TEXT NOT NULL PRIMARY KEY,
-    binary_id     TEXT NOT NULL REFERENCES secure_cli_binaries(id) ON DELETE CASCADE,
-    user_id       VARCHAR(255) NOT NULL,
-    encrypted_env BLOB NOT NULL,
-    metadata      TEXT NOT NULL DEFAULT '{}',
-    tenant_id     TEXT NOT NULL REFERENCES tenants(id),
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    id              TEXT NOT NULL PRIMARY KEY,
+    binary_id       TEXT NOT NULL REFERENCES secure_cli_binaries(id) ON DELETE CASCADE,
+    user_id         VARCHAR(255) NOT NULL,
+    encrypted_env   BLOB NOT NULL,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
+    credential_type TEXT,
+    host_scope      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE(binary_id, user_id, tenant_id)
 );
 
@@ -1668,6 +1671,29 @@ CREATE TABLE IF NOT EXISTS tenant_hook_budget (
 );
 
 -- ============================================================
+-- Table: bitrix_portals (migration 000068)
+-- Stores per-tenant OAuth credentials + refresh state for a Bitrix24 portal.
+-- credentials + state are AES-256-GCM ciphertext (internal/crypto/aes.go).
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS bitrix_portals (
+    id           TEXT NOT NULL PRIMARY KEY,
+    tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name         VARCHAR(100) NOT NULL,
+    domain       VARCHAR(255) NOT NULL,
+    credentials  BLOB,
+    state        BLOB,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bitrix_portals_tenant_name
+    ON bitrix_portals (tenant_id, name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bitrix_portals_domain
+    ON bitrix_portals (LOWER(TRIM(domain)));
+
+-- ============================================================
 -- Table: webhooks  (registry, migrations 000059 + 000061)
 -- secret_hash stores SHA-256 hex; used only for bearer-token lookup.
 -- encrypted_secret stores AES-256-GCM(raw_secret, GOCLAW_ENCRYPTION_KEY); decrypted at HMAC sign time.
@@ -1821,3 +1847,36 @@ CREATE TABLE IF NOT EXISTS workstation_activity (
 CREATE INDEX IF NOT EXISTS idx_ws_activity_ws_time     ON workstation_activity(workstation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ws_activity_tenant_time ON workstation_activity(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ws_activity_retention   ON workstation_activity(created_at);
+
+-- ============================================================
+-- Table: browser_cookies (migration 000069)
+-- User-selected cookies for server-side browser contexts.
+-- Values are AES-256-GCM ciphertext. Scope is tenant + user + agent.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS browser_cookies (
+    id              TEXT NOT NULL PRIMARY KEY,
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id         VARCHAR(255) NOT NULL,
+    agent_id        VARCHAR(255) NOT NULL,
+    domain          TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    path            TEXT NOT NULL DEFAULT '/',
+    encrypted_value TEXT NOT NULL,
+    secure          INTEGER NOT NULL DEFAULT 0,
+    http_only       INTEGER NOT NULL DEFAULT 0,
+    same_site       VARCHAR(32) NOT NULL DEFAULT '',
+    expires_at      TEXT,
+    source          VARCHAR(64) NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (TRIM(domain) <> ''),
+    CHECK (TRIM(name) <> ''),
+    CHECK (TRIM(path) <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_cookies_scope_unique
+    ON browser_cookies (tenant_id, user_id, agent_id, domain, path, name);
+CREATE INDEX IF NOT EXISTS idx_browser_cookies_scope_domain
+    ON browser_cookies (tenant_id, user_id, agent_id, domain);
+CREATE INDEX IF NOT EXISTS idx_browser_cookies_expires_at
+    ON browser_cookies (expires_at);

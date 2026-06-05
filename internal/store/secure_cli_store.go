@@ -34,9 +34,20 @@ type SecureCLIBinary struct {
 	IsGlobal       bool            `json:"is_global" db:"is_global"`
 	Enabled        bool            `json:"enabled" db:"enabled"`
 	CreatedBy      string          `json:"created_by" db:"created_by"`
-	UserEnv        []byte          `json:"-" db:"-"` // per-user encrypted env (populated by LookupByBinary LEFT JOIN)
+	// AdapterName routes the binary to a CredentialAdapter at exec time.
+	// NULL/empty → passthrough adapter (legacy env-vars injection only).
+	// Non-empty (e.g. "git") → typed adapter resolved via tools.LookupAdapter.
+	AdapterName *string `json:"adapter_name,omitempty" db:"adapter_name"`
+	UserEnv     []byte  `json:"-" db:"-"` // per-user encrypted env (populated by LookupByBinary LEFT JOIN)
+	// UserCredentialType + UserHostScope mirror the joined user-credential row
+	// (populated by LookupByBinary). NULL when the user has no credential or the
+	// credential is legacy env-only.
+	UserCredentialType *string `json:"-" db:"-"`
+	UserHostScope      *string `json:"-" db:"-"`
 	// EnvKeys is set by HTTP handlers only (names from decrypted env, no values); not a DB column.
 	EnvKeys []string `json:"env_keys,omitempty" db:"-"`
+	// Env is set by HTTP handlers only. Sensitive values are masked; value entries are visible.
+	Env map[string]SecureCLIEnvResponseEntry `json:"env,omitempty" db:"-"`
 	// AgentGrantsSummary is populated by List only — lightweight per-grant summary (no env bytes).
 	AgentGrantsSummary []AgentGrantSummary `json:"agent_grants_summary" db:"-"`
 }
@@ -75,6 +86,12 @@ type SecureCLIUserCredential struct {
 	UpdatedAt string          `json:"updated_at" db:"updated_at"`
 	// EncryptedEnv is decrypted JSON — never serialized to API.
 	EncryptedEnv []byte `json:"-" db:"encrypted_env"`
+	// CredentialType selects the wire shape carried in EncryptedEnv.
+	// NULL/empty → legacy env-vars map. Future: 'pat', 'ssh_key', 'pg_password_file'.
+	CredentialType *string `json:"credential_type,omitempty" db:"credential_type"`
+	// HostScope binds the credential to a specific hostname (e.g. 'github.com').
+	// Required when CredentialType ∈ {'pat','ssh_key'}; NULL for legacy env creds.
+	HostScope *string `json:"host_scope,omitempty" db:"host_scope"`
 }
 
 // SecureCLIAgentGrant represents a per-agent grant with optional setting overrides.
@@ -92,6 +109,8 @@ type SecureCLIAgentGrant struct {
 	EncryptedEnv []byte `json:"-" db:"encrypted_env"`
 	// EnvKeys is populated by HTTP handlers only (sorted key names, no values). Not a DB column.
 	EnvKeys []string `json:"env_keys,omitempty" db:"-"`
+	// Env is populated by HTTP handlers only for sanitized responses.
+	Env map[string]SecureCLIEnvResponseEntry `json:"env,omitempty" db:"-"`
 	// EnvSet indicates whether this grant has an env override. Not a DB column.
 	EnvSet    bool      `json:"env_set" db:"-"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
@@ -131,6 +150,10 @@ type SecureCLIStore interface {
 
 	GetUserCredentials(ctx context.Context, binaryID uuid.UUID, userID string) (*SecureCLIUserCredential, error)
 	SetUserCredentials(ctx context.Context, binaryID uuid.UUID, userID string, encryptedEnv []byte) error
+	// SetUserCredentialsTyped writes a typed user credential (PAT, SSH key, etc.).
+	// credentialType and hostScope are nil for legacy env-vars credentials —
+	// in that case behavior is identical to SetUserCredentials.
+	SetUserCredentialsTyped(ctx context.Context, binaryID uuid.UUID, userID string, encryptedEnv []byte, credentialType, hostScope *string) error
 	DeleteUserCredentials(ctx context.Context, binaryID uuid.UUID, userID string) error
 	ListUserCredentials(ctx context.Context, binaryID uuid.UUID) ([]SecureCLIUserCredential, error)
 }

@@ -22,6 +22,7 @@ const (
 	defaultGatewayUpgradeScript = "/usr/local/bin/goclaw-upgrade-release"
 	defaultGatewayUpgradeStatus = "/var/lib/goclaw/update-jobs/current.json"
 	gatewayUpgradeTokenHeader   = "X-GoClaw-Upgrade-Token"
+	gatewayUpgradeRunningMaxAge = 30 * time.Minute
 )
 
 var gatewayUpgradeTagRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$`)
@@ -130,7 +131,7 @@ func (h *GatewayUpgradeHandler) handleStart(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read gateway upgrade status"})
 		return
 	}
-	if status["state"] == "running" {
+	if gatewayUpgradeStatusRunning(status, time.Now().UTC()) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "gateway upgrade already running"})
 		return
 	}
@@ -193,6 +194,26 @@ func (h *GatewayUpgradeHandler) readStatus() (map[string]any, error) {
 		return map[string]any{"state": "idle"}, nil
 	}
 	return status, nil
+}
+
+func gatewayUpgradeStatusRunning(status map[string]any, now time.Time) bool {
+	if status["state"] != "running" {
+		return false
+	}
+	startedRaw, ok := status["startedAt"].(string)
+	if !ok || strings.TrimSpace(startedRaw) == "" {
+		return true
+	}
+	startedAt, err := time.Parse(time.RFC3339, startedRaw)
+	if err != nil {
+		return true
+	}
+	age := now.Sub(startedAt)
+	if age < 0 || age <= gatewayUpgradeRunningMaxAge {
+		return true
+	}
+	slog.Warn("gateway upgrade stale running status ignored", "started_at", startedRaw, "age", age.String())
+	return false
 }
 
 func (h *GatewayUpgradeHandler) writeRunningStatus(tag string) error {

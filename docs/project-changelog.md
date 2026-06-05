@@ -4,6 +4,300 @@ Significant changes, features, and fixes in reverse chronological order.
 
 ---
 
+## 2026-05-28
+
+### CLI credential adapter framework + git adapter (issue #82)
+
+Refactors `credentialed_exec.go` from "flat env-var injection only" to a
+generic `CredentialAdapter` interface that supports argv prefix injection,
+ephemeral filesystem material, system-trusted env vars, and per-injection
+redaction. Existing presets (`gh`, `aws`, `gcloud`, `kubectl`, `terraform`,
+`gws`) route through a passthrough adapter and keep current behavior
+bit-for-bit.
+
+**New**
+
+- `CredentialAdapter` interface + registry in `internal/tools/credential_adapter.go`.
+  Default `passthrough` adapter preserves legacy behavior; named adapters
+  register via `init() → RegisterAdapter`.
+- `git` adapter (`internal/tools/credential_adapter_git.go`) covering both
+  HTTPS PAT and SSH key paths. PAT injected via `GIT_CONFIG_COUNT` +
+  `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*` env vars (never argv → keeps token
+  off `ps`/`/proc/<pid>/cmdline`). SSH key materialized to 0600 tmpfile +
+  `GIT_SSH_COMMAND` with `IdentitiesOnly=yes` and `StrictHostKeyChecking=accept-new`.
+  Passphrase-protected SSH keys rejected at validation with
+  `git.cred_ssh_passphrase_unsupported`.
+- `psql` framework-validation stub adapter (`internal/tools/credential_adapter_psql.go`)
+  proving the interface holds for non-git credential families.
+- Shared `materializeEphemeral` helper (`internal/tools/credential_ephemeral.go`)
+  with idempotent cleanup latch and explicit `0600` chmod.
+- Per-injection audit log: `slog.Warn("security.system_env_injection", …)`
+  with `adapter`, `binary`, `user_id`, sorted `env_keys` (names only),
+  `argv_prefix_len`, `host_scope_hash` (SHA-256 first 8 hex chars — plaintext
+  hostname intentionally omitted for PII safety). Schema pinned by
+  `TestEmitSystemEnvInjectionAudit_*`.
+- Typed-credential HTTP PUT path with `{error:{code,message}, error_key}`
+  envelope so the web UI can drive field-level validation
+  (`git.cred_host_scope_required`, `git.cred_ssh_passphrase_unsupported`,
+  etc.).
+- Web UI: `CliCredentialGitFields` extends the CLI Credentials dialog with
+  `Personal Access Token` / `SSH Private Key` picker, host-scope input,
+  CRLF→LF paste normalization, masked-secret edit flow (`••••••••`
+  placeholder preserves stored value on save).
+- 17 i18n keys × 3 locales (en/vi/zh).
+
+**Docs**
+
+- New: `docs/git-credential-adapter.md` — user-facing guide (when to use PAT
+  vs SSH vs env, host-scope semantics, TOFU caveat with `ssh-keyscan`
+  mitigation, SIGKILL residual material note, operator sweep recipe).
+- New: `docs/credential-adapter-playbook.md` — implementer guide with worked
+  mappings for `kubectl`, `docker`, `npm`, `aws`, `psql` and the three-question
+  interface-validation gate.
+- `docs/09-security.md` § 14 — trust-boundary diagram, audit field schema,
+  SSH TOFU + SIGKILL caveats, v2 future-work list.
+- `docs/03-tools-system.md` § 8a — adapter framework summary linking to the
+  playbook.
+
+**Security**
+
+- User-paste denylist (`ValidateGrantEnvVars`) unchanged — first line of
+  defense intact. Adapter path is the second, audit-trailed line; a typo in
+  `adapter_name` falls back to passthrough (no silent bypass).
+- AES-256-GCM at rest for stored PAT/SSH bodies; secrets cannot be read back
+  via API/UI.
+- `ScrubCredentials` redacts PAT bytes and SSH key path from stdout, stderr,
+  `Result.Content`, and audit log JSON.
+
+**Known v1 limitations**
+
+- One credential per (user, binary, host_scope).
+- No multi-host wildcard (`*.github.com`).
+- No persistent `known_hosts` per credential (TOFU only).
+- No sandbox support (adapter is incompatible with bind-mount-based sandbox
+  path).
+- No credential-refresh primitive (blocks future `aws sts assume-role`
+  adapter).
+
+---
+
+## 2026-05-27
+
+### zuey VPS ops scripts: repo-tracked + CI auto-sync
+
+**Fixes**
+
+- Patched `/usr/local/bin/goclaw-deploy` on zuey to survive a self-loop `/opt/goclaw/current` symlink (`readlink -f` now `2>/dev/null || true`, with a warning when `previous` is empty). Without this, `set -euo pipefail` aborted before `ln -sfn` could overwrite the symlink, silently failing every `deploy_zuey_beta` CI run.
+
+**Changes**
+
+- Moved `scripts/goclaw-upgrade-release.sh` → `scripts/zuey/goclaw-upgrade-release.sh`.
+- Added `scripts/zuey/goclaw-deploy.sh` (canonical source for the on-host `/usr/local/bin/goclaw-deploy`).
+- Wired `Sync zuey ops scripts to VPS` step in `.github/workflows/dev-beta-release.yaml` to `scp + sudo install` both scripts before triggering the gateway upgrade endpoint on every beta release. Requires new repository secrets `ZUEY_SSH_PRIVATE_KEY_B64` (base64-encoded private key, single line) and `ZUEY_SUDO_PASS`; step skips with a warning if either is unset.
+- Updated `docs/deployment-guide.md` with the self-loop guard rationale, manual sync recipe, and required-secrets table.
+
+**Followup fix (run 26499549166)**
+
+- First real `deploy_zuey_beta` run on `dev` failed with `Load key: error in libcrypto` because GitHub Secrets storage normalized newlines inside the multi-line PEM block. Switched the secret to base64 (`ZUEY_SSH_PRIVATE_KEY_B64`) and added pre-flight validation (`ssh-keygen -y -f`) that fails fast with a remediation hint if the decoded key is malformed.
+
+---
+
+## 2026-05-24
+
+### Google Workspace CLI runtime integration
+
+**Features**
+
+- Added `gws` as a preinstalled Google Workspace CLI in the full runtime image.
+- Added a SecureCLI `gws` preset with encrypted credential injection fields and guardrails for interactive auth/export commands.
+- Documented Drive, Gmail, and Calendar command patterns plus live credential smoke-test requirements.
+
+**Tests**
+
+- Added runtime binary discovery, SecureCLI preset, deny-pattern, and Dockerfile contract coverage for Google Workspace CLI.
+
+### Slash skill commands
+
+**Features**
+
+- Added explicit slash skill activation for `/<slug>`, `/use <slug-or-name>`, `/list-skills`, and `/help <slug-or-name>`.
+- Added tenant settings for slash command enablement, similar-skill suggestions, partial matching, and custom prefix.
+
+**Tests**
+
+- Added backend coverage for parser false positives, exact/partial skill resolution, suggestions, help/list commands, and config overlays.
+
+### Configurable skill upload limits
+
+**Features**
+
+- Added configurable skill ZIP upload limits with config/env, SKILL.md frontmatter, and tenant system setting support.
+- Added dashboard settings and dynamic upload validation so the Web UI follows the tenant limit instead of hardcoding 20MB.
+
+**Tests**
+
+- Added backend coverage for limit precedence, clamping, oversized rejection, and frontend coverage for parameterized upload validation.
+
+### CLI environment variable visibility
+
+**Features**
+
+- Added `sensitive` and `value` kinds for secure CLI environment variables across binary defaults, agent grant overrides, and user overrides.
+- Plain value entries are visible to authorized admins for operational config review, while sensitive entries remain masked and replace-only.
+
+**Fixes**
+
+- Stopped per-user credential reads from returning legacy sensitive env values raw.
+- Kept legacy `{"KEY":"value"}` env blobs backward-compatible by treating them as sensitive.
+
+**Tests**
+
+- Added backend regression coverage for env kind parsing, sanitized API responses, runtime flattening, and invalid kind rejection.
+- Verified Web UI build after adding env-kind controls and warnings.
+
+### Command keyword allowlist
+
+**Features**
+
+- Added scoped credentialed CLI keyword allowlist config for content arguments and positional arguments, with runtime reload and web config editing.
+
+**Fixes**
+
+- Kept credentialed CLI `deny_args` active for command paths such as `gh secret set` while allowing approved GitHub issue/PR prose to mention security vocabulary.
+- Added security audit logging for real allowlisted pass-throughs without logging full argument values.
+
+**Tests**
+
+- Added regression coverage for scoped keyword masking, disabled rules, unsafe positional rules, config reload, and race-safe policy snapshots.
+
+### Browser cookie sync and config UI
+
+**Features**
+
+- Added scoped browser cookie sync API, encrypted cookie store, browser runtime cookie application, dashboard browser settings, and a selected-cookie Chrome extension prototype.
+
+### Cron SecureCLI credential context
+
+**Fixes**
+
+- Fixed cron-triggered agent turns so credentialed CLI lookups preserve the explicit tenant user credential identity captured when the cron job is created.
+- Kept cron `user_id` ownership unchanged for group-scoped list/remove behavior while storing credential lookup identity separately in cron payload metadata.
+
+**Tests**
+
+- Added regression coverage for cron payload credential metadata, legacy payload compatibility, cron scheduler context injection, and SQLite cron persistence parity.
+
+---
+
+## 2026-05-22
+
+### Usage Cap budget controls
+
+**Features**
+
+- Added Standard/PostgreSQL usage caps for AI budget control by hour, day, week, or month.
+- Caps support token and USD cost ceilings at tenant, agent, provider, provider type, and model scopes.
+- Added OpenRouter catalog sync plus tenant/provider/model pricing overrides for input, output, cache read/write, reasoning, request, image, and web search units.
+- Enforced caps in agent, fallback model, subagent, memory flush, compaction, and media reading tools (`read_image`, `read_document`, `read_audio`, `read_video`) with preflight reservation and post-call reconciliation.
+- Added non-negative validation for catalog and override pricing fields.
+- Added OpenRouter alias resolution for native model IDs, cached-input accounting normalization, and partial-stream failure reconciliation.
+- Bridged legacy `budget_monthly_cents` into generated monthly agent USD cap policies, including migration backfill and save-time sync.
+- Added web dashboard controls on Usage and Provider detail pages.
+- Added Usage page editing for manual cap policies, including enable/disable, scope clearing, and token/USD limit clearing while keeping generated agent-budget caps read-only.
+- Added usage-cap decision metadata to LLM spans, including allow/skip/block reason, policy IDs, estimates, actuals, and reconcile status.
+
+**Tests**
+
+- Added pricing and cap service coverage.
+- Verified Go builds, SQLite build compatibility, full Go test suite, integration race suite, and Web UI production build.
+
+### Messaging debounce hardening
+
+**Features**
+
+- Added per-agent inbound debounce override via `other_config.inbound_debounce_ms`; unset inherits the global gateway setting.
+- Added Web Chat debounce for rapid text-only `chat.send` calls using `gateway.inbound_debounce_ms`.
+- Clarified shared inbound debounce behavior in docs and Web UI config help text.
+
+**Fixes**
+
+- Fixed inbound debounce semantics so `gateway.inbound_debounce_ms=0` means no debounce and positive values set the wait window.
+- Fixed Slack `debounce_delay: 0` so it disables per-thread batching instead of falling back to the default.
+
+**Tests**
+
+- Added regression coverage for channel inbound debounce, Web Chat debounce, media/cancel bypass handling, and Slack debounce config defaults.
+
+### CLI P6 backend API unblock
+
+**Features**
+
+- Added HTTP session branch and history follow endpoints for automation clients.
+- Added read-only channel writer permission testing.
+- Added split activity-log and runtime-log aggregate endpoints.
+
+**Tests**
+
+- Added focused HTTP, store, and runtime log coverage for branch/follow, writer test, activity aggregate, and LogTee ring aggregation.
+
+### CI/CD: zuey beta deploy
+
+**Features**
+
+- Added automatic zuey VPS deployment to the `Dev CI and Beta Release` workflow after beta prerelease assets are published.
+- The deploy job triggers the protected gateway upgrade endpoint with the generated `vX.Y.Z-beta.N` tag, waits for upgrade status, and verifies public `/health`.
+- Beta prereleases now upload `CHECKSUMS.sha256` alongside binary assets.
+
+**Fixes**
+
+- Updated the host release-upgrade script to support beta asset filenames with a leading `v`.
+- Added checksum fallback to GitHub release asset SHA256 digests when beta releases do not publish `CHECKSUMS.sha256`.
+- Detached gateway-triggered upgrades into a transient `systemd-run` unit so stopping `goclaw` during deploy no longer kills the upgrade job.
+- Allowed stale upgrade `running` status records to be superseded after timeout and made the zuey deploy wait loop tolerate transient 502s during restart.
+
+**Tests**
+
+- Added regression coverage for stale gateway upgrade status recovery.
+
+---
+
+## 2026-05-21
+
+### Tools: configurable exec timeout
+
+**Features**
+
+- Added `exec.settings.timeout_seconds` for configurable host command timeout through global and tenant built-in tool settings.
+- Added dashboard controls for the `exec` timeout, defaulting missing settings to 60 seconds.
+- Kept Docker sandbox execution on `sandbox_config.timeout_sec`; `exec.timeout_seconds` only affects the host built-in.
+
+**Fixes**
+
+- Added API validation for `exec` settings so invalid, zero, negative, fractional, or excessive timeout values are rejected before persistence.
+
+**Tests**
+
+- Added focused runtime and HTTP API regression coverage for configured `exec` timeouts and invalid settings.
+- Verified web dashboard build with the typed `exec` settings form.
+
+---
+
+## 2026-05-20
+
+### HTTP API contract hardening
+
+**Fixes**
+
+- Fixed memory API `{agentID}` handling so agent keys are resolved before storage access and invalid IDs return structured client errors instead of leaking UUID parse failures as HTTP 500.
+- Allowed system/admin API-key automation to list agents and sessions without an extra `X-GoClaw-User-Id` header while preserving user filtering for non-admin callers.
+- Added structured `/v1/*` not-found responses and a read-only `GET /v1/sessions` compatibility endpoint for automation clients.
+
+**Tests**
+
+- Added regression coverage for memory agent-key resolution, invalid memory IDs, session list auth behavior, and structured API 404s.
+
+---
+
 ## 2026-05-18
 
 ### Packages: GitHub installer runtime path

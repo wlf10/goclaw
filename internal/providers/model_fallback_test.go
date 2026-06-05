@@ -94,6 +94,33 @@ func TestModelFallbackProviderDoesNotFallbackAfterStreamChunk(t *testing.T) {
 	}
 }
 
+func TestModelFallbackProviderChatStreamWithHookReportsStreamedChunks(t *testing.T) {
+	streamErr := &HTTPError{Status: 429, Body: "rate limited"}
+	primary := &testFallbackProvider{
+		name:      "primary",
+		model:     "primary-model",
+		streamErr: streamErr,
+	}
+	provider := NewModelFallbackProvider(FallbackCandidate{
+		ProviderName: "primary",
+		Provider:     primary,
+		Model:        "primary-model",
+	}, nil, 1, false)
+
+	var streamed bool
+	_, err := provider.ChatStreamWithHook(context.Background(), ChatRequest{}, func(StreamChunk) {}, func(context.Context, FallbackCandidate, ChatRequest) (FallbackAfterCall, error) {
+		return func(_ *ChatResponse, _ error, info FallbackCallInfo) {
+			streamed = info.Streamed
+		}, nil
+	})
+	if err == nil {
+		t.Fatal("ChatStreamWithHook() error = nil, want stream error")
+	}
+	if !streamed {
+		t.Fatal("FallbackCallInfo.Streamed = false, want true after partial stream")
+	}
+}
+
 func TestModelFallbackProviderFallsBackToSameModelOnDifferentProvider(t *testing.T) {
 	primary := &testFallbackProvider{
 		name:  "primary",

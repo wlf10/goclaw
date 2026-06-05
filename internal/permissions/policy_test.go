@@ -315,6 +315,25 @@ func TestValidScope(t *testing.T) {
 // wrongly classifying exec.approval.list as RoleOperator. exec.approval.list
 // is an explicit entry in isReadMethod and must resolve to RoleViewer.
 
+// TestMethodRole_BitrixPortals_Classifications locks in the role required
+// for each bitrix.portals.* method. Reads are tenant-member (viewer) so a
+// channel-form dropdown can populate; writes are tenant-admin to gate
+// portal credential entry. Regression coverage for issue caught in deploy
+// where unclassified methods were RoleNone → "fail-closed" 403.
+func TestMethodRole_BitrixPortals_Classifications(t *testing.T) {
+	cases := map[string]Role{
+		protocol.MethodBitrixPortalsList:          RoleViewer,
+		protocol.MethodBitrixPortalsGetInstallURL: RoleViewer,
+		protocol.MethodBitrixPortalsCreate:        RoleAdmin,
+		protocol.MethodBitrixPortalsDelete:        RoleAdmin,
+	}
+	for method, want := range cases {
+		if got := MethodRole(method); got != want {
+			t.Errorf("MethodRole(%q) = %q, want %q", method, got, want)
+		}
+	}
+}
+
 func TestMethodRole_ApprovalsList_IsViewer(t *testing.T) {
 	if got := MethodRole(protocol.MethodApprovalsList); got != RoleViewer {
 		t.Fatalf("exec.approval.list must be RoleViewer (listed in isReadMethod); got %q", got)

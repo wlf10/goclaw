@@ -1,8 +1,6 @@
 package http
 
 import (
-	"archive/zip"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -225,16 +223,3 @@ func (h *SkillsHandler) handleRevokeUser(w http.ResponseWriter, r *http.Request)
 }
 
 // --- Helpers ---
-
-func readZipFile(f *zip.File) (string, error) {
-	rc, err := f.Open()
-	if err != nil {
-		return "", err
-	}
-	defer rc.Close()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}

@@ -12,11 +12,13 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
+	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/skills"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
@@ -670,6 +672,65 @@ func TestHandleUpload_ReturnsGrantErrors(t *testing.T) {
 	}
 }
 
+func TestResolveSkillUploadLimitMBPrecedenceAndClamp(t *testing.T) {
+	ctx := store.WithTenantID(context.Background(), store.MasterTenantID)
+	handler, _, _, _ := newTestUploadHandler(t)
+	handler.SetUploadLimitConfig(config.SkillsConfig{MaxUploadSizeMB: 30})
+
+	if got := handler.resolveSkillUploadLimitMB(ctx, nil); got != 30 {
+		t.Fatalf("global limit = %d, want 30", got)
+	}
+	if got := handler.resolveSkillUploadLimitMB(ctx, map[string]string{"max_upload_size_mb": "100"}); got != 100 {
+		t.Fatalf("frontmatter limit = %d, want 100", got)
+	}
+
+	handler.SetSystemConfigStore(&skillUploadSystemConfigStore{data: map[string]string{skillUploadMaxSizeConfigKey: "40"}})
+	if got := handler.resolveSkillUploadLimitMB(ctx, map[string]string{"max_upload_size_mb": "100"}); got != 40 {
+		t.Fatalf("tenant limit = %d, want 40", got)
+	}
+
+	handler.SetSystemConfigStore(&skillUploadSystemConfigStore{data: map[string]string{skillUploadMaxSizeConfigKey: "999"}})
+	if got := handler.resolveSkillUploadLimitMB(ctx, nil); got != config.MaxSkillMaxUploadSizeMB {
+		t.Fatalf("clamped tenant limit = %d, want %d", got, config.MaxSkillMaxUploadSizeMB)
+	}
+}
+
+func TestUploadRejectsZipAboveConfiguredLimit(t *testing.T) {
+	handler, _, ctx, _ := newTestUploadHandler(t)
+	handler.SetUploadLimitConfig(config.SkillsConfig{MaxUploadSizeMB: 1})
+
+	req := newZipUploadRequestWithBinary(t, ctx, map[string][]byte{
+		"SKILL.md":  []byte(skillMarkdown("Large Skill", "large-skill")),
+		"large.bin": bytes.Repeat([]byte("x"), (1<<20)+1),
+	})
+	w := httptest.NewRecorder()
+	handler.handleUpload(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "exceeds") || !strings.Contains(w.Body.String(), "1 MB") {
+		t.Fatalf("body = %s, want configured upload limit error", w.Body.String())
+	}
+}
+
+func TestUploadAllowsFrontmatterLimitAboveGlobalDefault(t *testing.T) {
+	handler, _, ctx, _ := newTestUploadHandler(t)
+	handler.SetUploadLimitConfig(config.SkillsConfig{MaxUploadSizeMB: 1})
+	skillMD := "---\nname: Video Skill\nslug: video-skill\nmax_upload_size_mb: 2\n---\nSkill body\n"
+
+	req := newZipUploadRequestWithBinary(t, ctx, map[string][]byte{
+		"SKILL.md":  []byte(skillMD),
+		"large.bin": bytes.Repeat([]byte("x"), (1<<20)+(128<<10)),
+	})
+	w := httptest.NewRecorder()
+	handler.handleUpload(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func newTestUploadHandler(t *testing.T) (*SkillsHandler, *skillManageStoreStub, context.Context, string) {
 	t.Helper()
 
@@ -738,6 +799,43 @@ func newZipUploadRequestWithManagers(t *testing.T, ctx context.Context, files ma
 	return req.WithContext(ctx)
 }
 
+func newZipUploadRequestWithBinary(t *testing.T, ctx context.Context, files map[string][]byte) *http.Request {
+	t.Helper()
+
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	for name, content := range files {
+		header := &zip.FileHeader{Name: name, Method: zip.Store}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := w.Write(content); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", "skill.zip")
+	if err != nil {
+		t.Fatalf("multipart file: %v", err)
+	}
+	if _, err := part.Write(zipBuf.Bytes()); err != nil {
+		t.Fatalf("multipart write: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("multipart close: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/skills/upload", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req.WithContext(ctx)
+}
+
 func newUploadManagerIDsFormRequest(t *testing.T, raw string) *http.Request {
 	t.Helper()
 
@@ -767,6 +865,35 @@ type skillManageStoreStub struct {
 	hashBySlug  map[string]string // slug -> SKILL.md content hash (most recent)
 	grantCalls  []skillGrantCall
 	grantErrors map[uuid.UUID]error
+	lastUpdates map[uuid.UUID]map[string]any
+}
+
+type skillUploadSystemConfigStore struct {
+	data map[string]string
+}
+
+func (s *skillUploadSystemConfigStore) Get(_ context.Context, key string) (string, error) {
+	if v, ok := s.data[key]; ok {
+		return v, nil
+	}
+	return "", errors.New("not found")
+}
+
+func (s *skillUploadSystemConfigStore) Set(_ context.Context, key, value string) error {
+	if s.data == nil {
+		s.data = map[string]string{}
+	}
+	s.data[key] = value
+	return nil
+}
+
+func (s *skillUploadSystemConfigStore) Delete(_ context.Context, key string) error {
+	delete(s.data, key)
+	return nil
+}
+
+func (s *skillUploadSystemConfigStore) List(_ context.Context) (map[string]string, error) {
+	return s.data, nil
 }
 
 type skillGrantCall struct {
@@ -785,6 +912,7 @@ func newSkillManageStoreStub(baseDir string) *skillManageStoreStub {
 		systemDirs:  map[string]string{},
 		hashBySlug:  map[string]string{},
 		grantErrors: map[uuid.UUID]error{},
+		lastUpdates: map[uuid.UUID]map[string]any{},
 	}
 }
 
@@ -915,6 +1043,10 @@ func (s *skillManageStoreStub) UpdateSkill(ctx context.Context, id uuid.UUID, up
 	if status, ok := updates["status"].(string); ok {
 		skill.Status = status
 	}
+	if visibility, ok := updates["visibility"].(string); ok {
+		skill.Visibility = visibility
+	}
+	s.lastUpdates[id] = maps.Clone(updates)
 	s.skills[id] = skill
 	return nil
 }

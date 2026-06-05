@@ -21,8 +21,6 @@ import (
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
-const maxSkillUploadSize = 20 << 20 // 20 MB
-
 var (
 	aggregateInstallDeps = skills.AggregateMissingDeps
 	installManagedDeps   = skills.InstallDeps
@@ -40,11 +38,13 @@ type SkillsHandler struct {
 	tenantStore    store.TenantStore
 	db             *sql.DB  // for export/import direct queries
 	uploadLocks    sync.Map // per-slug mutex; bounded by validated slug set, entries are tiny (*sync.Mutex)
+	uploadLimitCfg config.SkillsConfig
+	systemConfigs  store.SystemConfigStore
 }
 
 // NewSkillsHandler creates a handler for skill management endpoints.
 func NewSkillsHandler(skills store.SkillManageStore, baseDir, dataDir, bundledDir string, msgBus *bus.MessageBus, tenantCfgStore store.SkillTenantConfigStore, tenantStore store.TenantStore) *SkillsHandler {
-	return &SkillsHandler{skills: skills, baseDir: baseDir, dataDir: dataDir, bundledDir: bundledDir, msgBus: msgBus, tenantCfgStore: tenantCfgStore, tenantStore: tenantStore}
+	return &SkillsHandler{skills: skills, baseDir: baseDir, dataDir: dataDir, bundledDir: bundledDir, msgBus: msgBus, tenantCfgStore: tenantCfgStore, tenantStore: tenantStore, uploadLimitCfg: config.SkillsConfig{MaxUploadSizeMB: config.DefaultSkillMaxUploadSizeMB}}
 }
 
 // tenantSkillsDir returns the skills-store directory scoped to the requesting tenant.
@@ -215,6 +215,19 @@ func (h *SkillsHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	delete(updates, "file_path")
 	delete(updates, "is_system")
 	delete(updates, "enabled")
+
+	if v, ok := updates["visibility"]; ok {
+		vs, ok := v.(string)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidVisibility, "")})
+			return
+		}
+		if err := skills.ValidateVisibility(vs); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidVisibility, vs)})
+			return
+		}
+		updates["visibility"] = skills.NormalizeVisibility(vs)
+	}
 
 	if err := h.skills.UpdateSkill(r.Context(), id, updates); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

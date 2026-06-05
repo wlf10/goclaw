@@ -9,7 +9,7 @@ import type { CLIAgentGrant } from "../hooks/use-cli-credentials";
 describe("cli credential grant env helpers", () => {
   it("omits env_vars when existing masked values are not revealed", () => {
     const payload = buildEnvVarsPayload(
-      { overrideEnabled: true, entries: [{ key: "TOKEN", value: "", masked: true }] },
+      { overrideEnabled: true, entries: [{ key: "TOKEN", value: "", kind: "sensitive", masked: true }] },
       true,
     );
     expect(payload).toBeUndefined();
@@ -20,14 +20,14 @@ describe("cli credential grant env helpers", () => {
       {
         overrideEnabled: true,
         entries: [
-          { key: " CLI_ENV ", value: "agent-value", masked: false },
-          { key: "", value: "ignored", masked: false },
-          { key: "MASKED", value: "", masked: true },
+          { key: " CLI_ENV ", value: "agent-value", kind: "value", masked: false },
+          { key: "", value: "ignored", kind: "sensitive", masked: false },
+          { key: "MASKED", value: "", kind: "sensitive", masked: true },
         ],
       },
       false,
     );
-    expect(payload).toEqual({ CLI_ENV: "agent-value" });
+    expect(payload).toEqual({ CLI_ENV: { kind: "value", value: "agent-value" } });
   });
 
   it("clears existing env override when override is disabled", () => {
@@ -39,13 +39,31 @@ describe("cli credential grant env helpers", () => {
     const state = envStateFromGrant({
       env_set: true,
       env_keys: ["API_KEY", "TOKEN"],
-    } as CLIAgentGrant);
+    } as unknown as CLIAgentGrant);
 
     expect(state).toEqual({
       overrideEnabled: true,
       entries: [
-        { key: "API_KEY", value: "", masked: true },
-        { key: "TOKEN", value: "", masked: true },
+        { key: "API_KEY", value: "", kind: "sensitive", masked: true },
+        { key: "TOKEN", value: "", kind: "sensitive", masked: true },
+      ],
+    });
+  });
+
+  it("derives visible value entries from sanitized grant env metadata", () => {
+    const state = envStateFromGrant({
+      env_set: true,
+      env: {
+        PUBLIC_BASE_URL: { kind: "value", value: "https://goclaw.sh", masked: false },
+        TOKEN: { kind: "sensitive", value: null, masked: true },
+      },
+    } as unknown as CLIAgentGrant);
+
+    expect(state).toEqual({
+      overrideEnabled: true,
+      entries: [
+        { key: "PUBLIC_BASE_URL", value: "https://goclaw.sh", kind: "value", masked: false },
+        { key: "TOKEN", value: "", kind: "sensitive", masked: true },
       ],
     });
   });

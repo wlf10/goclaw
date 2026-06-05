@@ -13,7 +13,7 @@ import type {
 } from "@/types/agent";
 import {
   ChatGPTOAuthRoutingSection, ThinkingSection, WorkspaceSharingSection, CompactionSection,
-  ContextPruningSection, ModelFallbackSection, SandboxSection,
+  ContextPruningSection, InboundDebounceSection, ModelFallbackSection, SandboxSection,
 } from "./config-sections";
 import { WorkspaceSection } from "./general-sections";
 import { useProviders } from "@/pages/providers/hooks/use-providers";
@@ -57,6 +57,8 @@ export function AgentAdvancedDialog({ open, onOpenChange, agent, onUpdate }: Age
   const [chatgptRouting, setChatgptRouting] = useState<ChatGPTOAuthRoutingConfig>(init.chatgptRouting);
   const [modelFallback, setModelFallback] = useState<ModelFallbackConfig>(init.modelFallback);
   const [comp, setComp] = useState<CompactionConfig>(init.comp);
+  const [inboundDebounceMode, setInboundDebounceMode] = useState(init.inboundDebounceMode);
+  const [inboundDebounceMs, setInboundDebounceMs] = useState(init.inboundDebounceMs);
   const [pruneEnabled, setPruneEnabled] = useState(init.pruneEnabled);
   const [prune, setPrune] = useState<ContextPruningConfig>(init.prune);
   const [sbEnabled, setSbEnabled] = useState(init.sbEnabled);
@@ -76,6 +78,8 @@ export function AgentAdvancedDialog({ open, onOpenChange, agent, onUpdate }: Age
     setModelFallback(s.modelFallback);
     setWsSharing(s.wsSharing);
     setComp(s.comp);
+    setInboundDebounceMode(s.inboundDebounceMode);
+    setInboundDebounceMs(s.inboundDebounceMs);
     setPruneEnabled(s.pruneEnabled);
     setPrune(s.prune);
     setSbEnabled(s.sbEnabled);
@@ -129,6 +133,8 @@ export function AgentAdvancedDialog({ open, onOpenChange, agent, onUpdate }: Age
         modelFallback,
         wsSharing,
         comp,
+        inboundDebounceMode,
+        inboundDebounceMs,
         pruneEnabled,
         prune,
         sbEnabled,
@@ -229,6 +235,12 @@ export function AgentAdvancedDialog({ open, onOpenChange, agent, onUpdate }: Age
           />
           <div className="space-y-4">
             <CompactionSection value={comp} onChange={setComp} />
+            <InboundDebounceSection
+              mode={inboundDebounceMode}
+              debounceMs={inboundDebounceMs}
+              onModeChange={setInboundDebounceMode}
+              onDebounceMsChange={setInboundDebounceMs}
+            />
             <ContextPruningSection
               enabled={pruneEnabled}
               value={prune}

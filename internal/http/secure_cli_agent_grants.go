@@ -68,7 +68,7 @@ func (h *SecureCLIGrantHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/cli-credentials/{id}/agent-grants/{grantId}", auth(h.handleGet))
 	mux.HandleFunc("PUT /v1/cli-credentials/{id}/agent-grants/{grantId}", auth(h.handleUpdate))
 	mux.HandleFunc("DELETE /v1/cli-credentials/{id}/agent-grants/{grantId}", auth(h.handleDelete))
-	// POST (not GET) to prevent caching and satisfy CSRF semantics per Red Team C1.
+	// POST keeps revealed secret material out of URL/history and avoids query caching.
 	mux.HandleFunc("POST /v1/cli-credentials/{id}/agent-grants/{grantId}/env:reveal", auth(h.handleRevealEnv))
 }
 
@@ -76,45 +76,41 @@ func (h *SecureCLIGrantHandler) RegisterRoutes(mux *http.ServeMux) {
 // EnvVars is optional; plaintext values are encrypted by the store layer.
 // Clients MUST NOT send encrypted_env — that field is never accepted from the wire.
 type grantCreateRequest struct {
-	AgentID        uuid.UUID         `json:"agent_id"`
-	EnvVars        map[string]string `json:"env_vars,omitempty"`
-	DenyArgs       *json.RawMessage  `json:"deny_args,omitempty"`
-	DenyVerbose    *json.RawMessage  `json:"deny_verbose,omitempty"`
-	TimeoutSeconds *int              `json:"timeout_seconds,omitempty"`
-	Tips           *string           `json:"tips,omitempty"`
-	Enabled        *bool             `json:"enabled,omitempty"`
+	AgentID        uuid.UUID        `json:"agent_id"`
+	EnvVars        json.RawMessage  `json:"env_vars,omitempty"`
+	DenyArgs       *json.RawMessage `json:"deny_args,omitempty"`
+	DenyVerbose    *json.RawMessage `json:"deny_verbose,omitempty"`
+	TimeoutSeconds *int             `json:"timeout_seconds,omitempty"`
+	Tips           *string          `json:"tips,omitempty"`
+	Enabled        *bool            `json:"enabled,omitempty"`
 }
 
-// populateGrantEnvFields sets EnvKeys (sorted) and EnvSet from the grant's decrypted env bytes.
-// Plaintext values are never exposed — only key names.
+// populateGrantEnvFields sets sorted key names, env presence, and sanitized entries.
 func populateGrantEnvFields(g *store.SecureCLIAgentGrant) {
 	if len(g.EncryptedEnv) == 0 {
 		g.EnvKeys = []string{}
+		g.Env = nil
 		g.EnvSet = false
 		return
 	}
-	var m map[string]any
-	if err := json.Unmarshal(g.EncryptedEnv, &m); err != nil {
-		g.EnvKeys = []string{}
-		g.EnvSet = false
-		return
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := store.SecureCLIEnvKeys(g.EncryptedEnv)
 	g.EnvKeys = keys
+	g.Env = store.SanitizeSecureCLIEnvJSON(g.EncryptedEnv)
 	g.EnvSet = len(keys) > 0
 }
 
 // validateAndSerializeEnvVars validates env keys/values via denylist and returns serialized JSON.
 // Returns (nil, 400 error response written) on denial, (jsonBytes, nil) on success.
 // Never logs env values or keys in error paths.
-func validateAndSerializeEnvVars(w http.ResponseWriter, locale string, envVars map[string]string) ([]byte, bool) {
-	if len(envVars) == 0 {
-		b, _ := json.Marshal(envVars)
-		return b, true
+func validateAndSerializeEnvVars(w http.ResponseWriter, locale string, raw json.RawMessage) ([]byte, bool) {
+	envEntries, err := store.ParseSecureCLIEnv(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgGrantEnvValueInvalid, err.Error())})
+		return nil, false
+	}
+	envVars := make(map[string]string, len(envEntries))
+	for key, entry := range envEntries {
+		envVars[key] = entry.Value
 	}
 	denied, valErr := crypto.ValidateGrantEnvVars(envVars)
 	if valErr != nil {
@@ -129,7 +125,7 @@ func validateAndSerializeEnvVars(w http.ResponseWriter, locale string, envVars m
 		})
 		return nil, false
 	}
-	b, err := json.Marshal(envVars)
+	b, err := store.SerializeSecureCLIEnv(envEntries)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgGrantEnvValueInvalid, "serialization failed")})
 		return nil, false
@@ -249,7 +245,7 @@ func (h *SecureCLIGrantHandler) handleCreate(w http.ResponseWriter, r *http.Requ
 		envJSON, ok := validateAndSerializeEnvVars(w, locale, req.EnvVars)
 		if !ok {
 			// Grant was created but env validation failed; clean it up to avoid orphan row.
-			// Finding #13: log rollback-delete failures for ops visibility.
+			// Log rollback-delete failures so operators can clean up orphan rows.
 			if delErr := h.grants.Delete(r.Context(), g.ID); delErr != nil {
 				slog.Error("secure_cli_grants.create.rollback_delete",
 					"grant_id", g.ID,
@@ -261,7 +257,7 @@ func (h *SecureCLIGrantHandler) handleCreate(w http.ResponseWriter, r *http.Requ
 		}
 		if err := h.grants.UpdateGrantEnv(r.Context(), g.ID, envJSON); err != nil {
 			slog.Error("secure_cli_grants.create.set_env", "grant_id", g.ID, "error", err)
-			// Finding #13: log rollback-delete failures for ops visibility.
+			// Log rollback-delete failures so operators can clean up orphan rows.
 			if delErr := h.grants.Delete(r.Context(), g.ID); delErr != nil {
 				slog.Error("secure_cli_grants.create.rollback_delete",
 					"grant_id", g.ID,
@@ -323,7 +319,7 @@ func (h *SecureCLIGrantHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		}
 		if allowedScalar[k] {
 			var decoded any
-			// Finding #3: return 400 on Unmarshal failure — silent discard means admin
+			// Return 400 on unmarshal failure; silent discard means admin
 			// thinks they applied a change (e.g. enabled: "false") but the grant is unchanged.
 			if err := json.Unmarshal(v, &decoded); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -335,7 +331,7 @@ func (h *SecureCLIGrantHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	// 3-state env_vars semantics: absent=skip, null=clear, {...}=replace.
-	// Finding #15: {} (empty map) is treated as clear — same as null.
+	// Empty map is treated as clear, same as null.
 	// TS type: absent | null | Record<string,string> — see ui/web/src/types/cli-credential.ts.
 	var envJSON []byte
 	envPresent := false
@@ -343,10 +339,14 @@ func (h *SecureCLIGrantHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		envPresent = true
 		var envPtr *map[string]string
 		if string(envRaw) != "null" {
-			var m map[string]string
-			if err := json.Unmarshal(envRaw, &m); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgGrantEnvValueInvalid, "env_vars must be a string map")})
+			envEntries, err := store.ParseSecureCLIEnv(envRaw)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgGrantEnvValueInvalid, "env_vars must be a string map or env entries")})
 				return
+			}
+			m := make(map[string]string, len(envEntries))
+			for key, entry := range envEntries {
+				m[key] = entry.Value
 			}
 			envPtr = &m
 		}
@@ -354,7 +354,7 @@ func (h *SecureCLIGrantHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		// Note: envPtr pointing to an empty map ({}) is treated as clear (same as null) —
 		// envJSON stays nil and UpdateGrantEnv(nil) removes the override.
 		if envPtr != nil && len(*envPtr) > 0 {
-			j, ok := validateAndSerializeEnvVars(w, locale, *envPtr)
+			j, ok := validateAndSerializeEnvVars(w, locale, envRaw)
 			if !ok {
 				return
 			}
@@ -430,8 +430,8 @@ func (h *SecureCLIGrantHandler) handleRevealEnv(w http.ResponseWriter, r *http.R
 	locale := store.LocaleFromContext(ctx)
 
 	// Rate limit: 10 reveals/min per authenticated caller (context UserID).
-	// Finding #2: require non-empty UserID from authenticated context.
-	// If UserID is empty, the auth middleware failed to populate it — reject rather
+	// Require non-empty UserID from authenticated context.
+	// If UserID is empty, auth middleware failed to populate it — reject rather
 	// than fall back to a spoofable header or IP address.
 	callerID := store.UserIDFromContext(ctx)
 	if callerID == "" {
@@ -476,8 +476,8 @@ func (h *SecureCLIGrantHandler) handleRevealEnv(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusOK, map[string]any{"env_vars": map[string]string{}})
 		return
 	}
-	var envVars map[string]string
-	if err := json.Unmarshal(g.EncryptedEnv, &envVars); err != nil {
+	envVars, err := store.FlattenSecureCLIEnv(g.EncryptedEnv)
+	if err != nil {
 		slog.Error("secure_cli_grants.reveal.parse", "grant_id", g.ID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "parse grant env")})
 		return

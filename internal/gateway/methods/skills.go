@@ -255,14 +255,16 @@ func (m *SkillsMethods) handleUpdate(ctx context.Context, client *gateway.Client
 
 	// Validate visibility enum if present — fail closed before mutating the DB.
 	if v, ok := params.Updates["visibility"]; ok {
-		vs, _ := v.(string)
+		vs, ok := v.(string)
+		if !ok {
+			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidVisibility, "")))
+			return
+		}
 		if err := skills.ValidateVisibility(vs); err != nil {
 			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgInvalidVisibility, vs)))
 			return
 		}
-		if vs != "" {
-			params.Updates["visibility"] = skills.NormalizeVisibility(vs)
-		}
+		params.Updates["visibility"] = skills.NormalizeVisibility(vs)
 	}
 
 	if err := updater.UpdateSkill(ctx, skillID, params.Updates); err != nil {

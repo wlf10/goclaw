@@ -23,6 +23,7 @@ func TestIsSkillVisibleTo(t *testing.T) {
 		{"private visible to owner", alice, "private", false, true},
 		{"private hidden from non-owner", bob, "private", false, false},
 		{"private with no owner treated as public", "", "private", false, true},
+		{"internal requires explicit grant outside this helper", bob, "internal", false, false},
 		{"unknown enum fails closed", bob, "team", false, false},
 		{"uppercase private matched for owner", alice, "PRIVATE", false, true},
 		{"whitespace public treated as public", bob, "  public  ", false, true},

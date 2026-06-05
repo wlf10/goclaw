@@ -108,11 +108,17 @@ export type EffectiveChatGPTOAuthRoutingStrategy =
 
 export type ChatGPTOAuthRoutingOverrideMode = "inherit" | "custom";
 export type ReasoningOverrideMode = "inherit" | "custom";
+export type InboundDebounceOverrideMode = "inherit" | "custom";
 
 export interface AgentReasoningConfig {
   override_mode?: ReasoningOverrideMode;
   effort?: string;
   fallback?: "downgrade" | "provider_default" | "off";
+}
+
+export interface InboundDebounceConfig {
+  override_mode?: InboundDebounceOverrideMode;
+  inbound_debounce_ms?: number;
 }
 
 export interface ChatGPTOAuthRoutingConfig {

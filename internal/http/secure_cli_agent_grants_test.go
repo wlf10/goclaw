@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,8 +60,16 @@ func (s *fakeSecureCLIGrantStore) Delete(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (s *fakeSecureCLIGrantStore) ListByBinary(context.Context, uuid.UUID) ([]store.SecureCLIAgentGrant, error) {
-	return nil, nil
+func (s *fakeSecureCLIGrantStore) ListByBinary(_ context.Context, binaryID uuid.UUID) ([]store.SecureCLIAgentGrant, error) {
+	grants := make([]store.SecureCLIAgentGrant, 0, len(s.grants))
+	for _, grant := range s.grants {
+		if grant == nil || grant.BinaryID != binaryID {
+			continue
+		}
+		cp := *grant
+		grants = append(grants, cp)
+	}
+	return grants, nil
 }
 
 func (s *fakeSecureCLIGrantStore) ListByAgent(context.Context, uuid.UUID) ([]store.SecureCLIAgentGrant, error) {
@@ -200,5 +209,44 @@ func TestSecureCLIGrantUpdateRejectsInvalidEnvVarsBeforeScalarUpdate(t *testing.
 	}
 	if fake.updateCalled {
 		t.Fatal("invalid env_vars request must not persist scalar grant updates")
+	}
+}
+
+func TestSecureCLIGrantGetSanitizesMixedEnv(t *testing.T) {
+	binaryID := uuid.New()
+	grantID := uuid.New()
+	fake := &fakeSecureCLIGrantStore{
+		grants: map[uuid.UUID]*store.SecureCLIAgentGrant{
+			grantID: {
+				BaseModel:    store.BaseModel{ID: grantID},
+				BinaryID:     binaryID,
+				AgentID:      uuid.New(),
+				Enabled:      true,
+				EncryptedEnv: []byte(`{"TOKEN":"secret-token","PUBLIC_BASE_URL":{"kind":"value","value":"https://goclaw.sh"}}`),
+			},
+		},
+	}
+	h := NewSecureCLIGrantHandler(fake, nil, nil)
+	rr, req := requestWithGrantPath(http.MethodGet, nil, binaryID, grantID)
+
+	h.handleGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret-token") {
+		t.Fatalf("sensitive grant env leaked in response: %s", rr.Body.String())
+	}
+	var got struct {
+		Env map[string]store.SecureCLIEnvResponseEntry `json:"env"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Env["TOKEN"].Masked || got.Env["TOKEN"].Value != nil {
+		t.Fatalf("TOKEN not masked: %#v", got.Env["TOKEN"])
+	}
+	if got.Env["PUBLIC_BASE_URL"].Value == nil || *got.Env["PUBLIC_BASE_URL"].Value != "https://goclaw.sh" {
+		t.Fatalf("PUBLIC_BASE_URL not returned: %#v", got.Env["PUBLIC_BASE_URL"])
 	}
 }

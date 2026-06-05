@@ -29,6 +29,11 @@ How skills access Python, Node.js, and system tools inside Docker containers and
 └─────────────────────────────────────────────────────────┘
 ```
 
+Explicit skill activation is handled before runtime execution. When a user starts
+their prompt with `/<skill-slug>` or `/use <skill name>`, the gateway resolves
+the skill, injects its `SKILL.md` into the current turn, and then normal runtime
+rules apply to any scripts or package dependencies that skill uses.
+
 ---
 
 ## 2. Pre-installed Packages (Option A)
@@ -39,10 +44,11 @@ Pre-installed runtimes depend on the Docker image variant you deploy. The Packag
 
 | Variant | Published tag | Build args | Pre-installed runtimes |
 |---------|---------------|------------|------------------------|
-| Minimal | `latest` | `ENABLE_PYTHON=false`, `ENABLE_NODE=false`, `ENABLE_FULL_SKILLS=false` | No Python or Node.js runtimes |
-| Python | `python` | `ENABLE_PYTHON=true` | `python3`, `py3-pip`, `edge-tts` |
-| Node | `node` | `ENABLE_NODE=true` | `nodejs`, `npm` |
-| Full | `full` | `ENABLE_FULL_SKILLS=true` | `python3`, `py3-pip`, `nodejs`, `npm`, `pandoc`, `github-cli`, bundled skill deps |
+| Latest | `latest` | `ENABLE_PYTHON=true`, `ENABLE_NODE=false`, `ENABLE_FULL_SKILLS=false` | `python3`, `py3-pip`, shared Python deps |
+| Base | `base` | `ENABLE_PYTHON=false`, `ENABLE_NODE=false`, `ENABLE_FULL_SKILLS=false` | No Python or Node.js runtimes |
+| Full | `full` | `ENABLE_FULL_SKILLS=true` | `python3`, `py3-pip`, `nodejs`, `npm`, `pandoc`, `github-cli`, bundled skill deps, Workspace CLI |
+| Custom Python | not published | `ENABLE_PYTHON=true` | `python3`, `py3-pip`, shared Python deps |
+| Custom Node | not published | `ENABLE_NODE=true` | `nodejs`, `npm` |
 
 ### Full Variant Extras
 
@@ -62,6 +68,7 @@ Pre-installed runtimes depend on the Docker image variant you deploy. The Packag
 |---------|---------|
 | `docx` | docx skill (document creation) |
 | `pptxgenjs` | pptx skill (presentation creation) |
+| `@googleworkspace/cli` (`gws`) | Google Workspace CLI for Drive, Gmail, Calendar, and Workspace APIs |
 
 ---
 
@@ -113,8 +120,10 @@ Default `{runtimeDir}` resolution:
 The system prompt and UI should treat runtime availability as variant-dependent:
 
 ```
-Minimal `latest`: Python/Node may be missing in the container.
-`python`, `node`, and `full` variants pre-install different runtimes.
+Published `latest`: Python is present; Node may be missing in the container.
+Published `full`: Python, Node, and full skill extras are present.
+Published `base`: Python and Node are absent.
+Custom builds can set ENABLE_PYTHON=true or ENABLE_NODE=true.
 To install additional packages: pip3 install <pkg> or npm install -g <pkg>
 ```
 
@@ -135,7 +144,7 @@ To install additional packages: pip3 install <pkg> or npm install -g <pkg>
 
 - Run Python/Node scripts via exec tool
 - Install packages via `pip3 install` / `npm install -g`
-- Access files in `/app/workspace/` including `.media/` subdirectory
+- Access files in `/app/workspace/`, including `.uploads/` for current user uploads and `.media/` for legacy media refs
 - Read skill files from `.goclaw/skills-store/`
 
 ### What Agents CANNOT Do
@@ -152,16 +161,18 @@ To install additional packages: pip3 install <pkg> or npm install -g <pkg>
 Uploaded files (from web chat, Telegram, Discord, etc.) are persisted to:
 
 ```
-/app/workspace/.media/{sessionHash}/{uuid}.{ext}
+/app/workspace/.uploads/{safe-original-name}-{8hex}.{ext}
 ```
+
+Uploads without a usable original filename fall back to `{uuid}.{ext}`. Legacy media refs may still resolve from `.media/{sessionHash}/{uuid}.{ext}`.
 
 The `enrichDocumentPaths()` function injects the full path into `<media:document>` tags:
 
 ```
-<media:document name="report.pdf" path="/app/workspace/.media/abc123/uuid.pdf">
+<media:document name="report.pdf" path="/app/workspace/.uploads/report-a1b2c3d4.pdf">
 ```
 
-Agents can read these files directly via exec — no copy to `/tmp` needed.
+Agents can read these files directly via exec — no copy to `/tmp` needed. For archive uploads such as `.zip`, inspect or extract with commands like `unzip -l "<path>"` or `unzip -q "<path>" -d <output-dir>`.
 
 ---
 
@@ -200,7 +211,7 @@ When a user uploads a skill with the same name via the UI, the managed version t
 To add a new package to the Docker image:
 
 1. **Python**: Add to the `pip3 install` line in `Dockerfile` (usually `full`, sometimes `python`)
-2. **Node.js**: Add to the `npm install -g` line in `Dockerfile` (usually `full`, sometimes `node`)
+2. **Node.js**: Add to the `npm install -g` line in `Dockerfile` (usually `full`, sometimes a custom `ENABLE_NODE=true` build)
 3. **System tool**: Add to the `apk add` line in `Dockerfile`
 4. **Docs/UI guidance**: Update runtime variant docs and any UI copy that describes pre-installed tools
 5. **Rebuild**: `docker compose ... up -d --build`

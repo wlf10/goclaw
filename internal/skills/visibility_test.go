@@ -10,9 +10,10 @@ func TestValidateVisibility(t *testing.T) {
 	}{
 		{"empty ok (caller defaults)", "", false},
 		{"private", "private", false},
+		{"internal", "internal", false},
 		{"public", "public", false},
 		{"uppercase normalized", "PRIVATE", false},
-		{"whitespace normalized", "  public  ", false},
+		{"whitespace normalized", "  internal  ", false},
 		{"team rejected (v1 scope)", "team", true},
 		{"garbage rejected", "nope", true},
 	}
@@ -30,6 +31,7 @@ func TestNormalizeVisibility(t *testing.T) {
 	cases := map[string]string{
 		"":          DefaultVisibility,
 		"private":   "private",
+		"INTERNAL":  "internal",
 		"PUBLIC":    "public",
 		"  public ": "public",
 	}

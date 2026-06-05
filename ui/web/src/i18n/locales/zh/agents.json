@@ -800,6 +800,16 @@
       "memoryFlush": "压缩前记忆",
       "memoryFlushTip": "压缩前，Agent可以将重要上下文保存到记忆文件。同时触发知识图谱提取。"
     },
+    "inboundDebounce": {
+      "title": "入站防抖",
+      "description": "为此 Agent 覆盖 Web Chat 和频道快速连续消息的合并设置。",
+      "mode": "模式",
+      "modeTip": "继承会使用全局 Behavior 设置。自定义会在此 Agent 上保存覆盖值。",
+      "inherit": "继承全局",
+      "custom": "自定义",
+      "debounceMs": "防抖（毫秒）",
+      "debounceMsTip": "设为 0 表示不防抖；正数会在该等待时间后合并连续消息。"
+    },
     "contextPruning": {
       "title": "上下文裁剪",
       "description": "裁剪旧工具结果以节省上下文窗口",

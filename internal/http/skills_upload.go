@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -43,7 +44,8 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxSkillUploadSize)
+	preParseLimitMB := h.resolvePreParseUploadLimitMB(r.Context())
+	r.Body = http.MaxBytesReader(w, r.Body, skillUploadBodyBytes(preParseLimitMB))
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -70,6 +72,11 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	size, err := io.Copy(tmp, file)
 	if err != nil {
 		tmp.Close()
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, skillUploadTooLargeMessage(maxBytesErr.Limit, preParseLimitMB))})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "failed to save upload")})
 		return
 	}
@@ -141,6 +148,11 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name, description, slug, frontmatter := skills.ParseSkillFrontmatter(skillContent)
+	uploadLimitMB := h.resolveSkillUploadLimitMB(r.Context(), frontmatter)
+	if size > skillUploadLimitBytes(uploadLimitMB) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, skillUploadTooLargeMessage(size, uploadLimitMB))})
+		return
+	}
 	if name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "name in SKILL.md frontmatter")})
 		return
@@ -239,15 +251,9 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "failed to create skill file directory")})
 			return
 		}
-		data, err := readZipFile(f)
-		if err != nil {
+		if err := copyZipFileToPath(f, destPath); err != nil {
 			os.RemoveAll(destDir)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "failed to read ZIP entry")})
-			return
-		}
-		if err := os.WriteFile(destPath, []byte(data), 0644); err != nil {
-			os.RemoveAll(destDir)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "failed to write skill files")})
 			return
 		}
 		if cleanName == "SKILL.md" {

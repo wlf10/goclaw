@@ -21,6 +21,13 @@ type ModelFallbackProvider struct {
 	maxAttempts int
 }
 
+type FallbackCallInfo struct {
+	Streamed bool
+}
+
+type FallbackAfterCall func(*ChatResponse, error, FallbackCallInfo)
+type FallbackBeforeCall func(ctx context.Context, entry FallbackCandidate, req ChatRequest) (after FallbackAfterCall, err error)
+
 func NewModelFallbackProvider(primary FallbackCandidate, fallbacks []FallbackCandidate, maxAttempts int, cooldownEnabled bool) *ModelFallbackProvider {
 	var tracker *CooldownTracker
 	if cooldownEnabled {
@@ -64,6 +71,22 @@ func (p *ModelFallbackProvider) Chat(ctx context.Context, req ChatRequest) (*Cha
 	})
 }
 
+func (p *ModelFallbackProvider) ChatWithHook(ctx context.Context, req ChatRequest, before FallbackBeforeCall) (*ChatResponse, error) {
+	return p.runOrdered(ctx, req, func(ctx context.Context, entry FallbackCandidate, req ChatRequest) (*ChatResponse, error) {
+		nextReq := req
+		nextReq.Model = entry.Model
+		after, err := before(ctx, entry, nextReq)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := entry.Provider.Chat(ctx, nextReq)
+		if after != nil {
+			after(resp, err, FallbackCallInfo{})
+		}
+		return resp, err
+	})
+}
+
 func (p *ModelFallbackProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk func(StreamChunk)) (*ChatResponse, error) {
 	return p.runOrdered(ctx, req, func(ctx context.Context, entry FallbackCandidate, req ChatRequest) (*ChatResponse, error) {
 		nextReq := req
@@ -75,6 +98,31 @@ func (p *ModelFallbackProvider) ChatStream(ctx context.Context, req ChatRequest,
 			}
 			onChunk(chunk)
 		})
+		if streamed && err != nil {
+			return nil, noFallbackAfterStreamError{err: err}
+		}
+		return resp, err
+	})
+}
+
+func (p *ModelFallbackProvider) ChatStreamWithHook(ctx context.Context, req ChatRequest, onChunk func(StreamChunk), before FallbackBeforeCall) (*ChatResponse, error) {
+	return p.runOrdered(ctx, req, func(ctx context.Context, entry FallbackCandidate, req ChatRequest) (*ChatResponse, error) {
+		nextReq := req
+		nextReq.Model = entry.Model
+		after, err := before(ctx, entry, nextReq)
+		if err != nil {
+			return nil, err
+		}
+		streamed := false
+		resp, err := entry.Provider.ChatStream(ctx, nextReq, func(chunk StreamChunk) {
+			if chunk.Content != "" || chunk.Thinking != "" || len(chunk.Images) > 0 {
+				streamed = true
+			}
+			onChunk(chunk)
+		})
+		if after != nil {
+			after(resp, err, FallbackCallInfo{Streamed: streamed})
+		}
 		if streamed && err != nil {
 			return nil, noFallbackAfterStreamError{err: err}
 		}

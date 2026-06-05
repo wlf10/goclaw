@@ -54,6 +54,29 @@ Streaming fallback is conservative: backup models are tried only if the stream f
 
 ---
 
+## Usage Cap Pricing Enforcement
+
+Standard edition can enforce AI budget caps before billable provider dispatch. API-key providers use OpenRouter `/models` pricing as the catalog source, with optional tenant/provider/model overrides in the dashboard.
+
+Excluded provider classes:
+- `chatgpt_oauth`, `claude_cli`, and `bailian` are treated as subscription/non-API pricing in round one.
+- local/no-key subprocess providers such as `acp` and `ollama` are skipped unless a future feature explicitly enables pricing for them.
+
+Runtime flow:
+1. Resolve the stored provider by name and skip non-billable provider classes.
+2. Load matching policies for tenant, agent, provider, provider type, and model.
+3. Resolve custom pricing override first, then OpenRouter catalog pricing when a matching policy has a cost ceiling. Native provider model IDs are mapped to OpenRouter prefixes for common providers such as OpenAI, Anthropic, and Gemini.
+4. Reserve estimated tokens and cost atomically before each dispatch attempt.
+5. Reconcile reserved counters after the provider returns usage or after a failed call.
+
+Token-only policies do not require catalog pricing. Model fallback routes reserve against the actual candidate provider/model before each attempt. Cached input is separated from uncached input for OpenAI-compatible usage accounting. Partial stream failures keep the estimate, or actual provider usage when available, instead of clearing billed output to zero. Internal LLM calls for memory flush, compaction, media reading tools (`read_image`, `read_document`, `read_audio`, `read_video`), and subagents use the same preflight/reconcile path.
+
+The legacy agent-level `budget_monthly_cents` field is treated as a generated monthly agent USD cap. Existing values are backfilled during migration, and later agent budget edits update or remove the generated cap policy.
+
+Supported price units: input, output, cache read, cache write, reasoning, request, image, and web search.
+
+---
+
 ## 2. Supported Providers
 
 ### Six Core Provider Types

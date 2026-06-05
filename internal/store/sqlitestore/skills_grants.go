@@ -94,8 +94,9 @@ func (s *SQLiteSkillStore) RevokeFromAgent(ctx context.Context, skillID, agentID
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE skills SET visibility = 'private', updated_at = ?
 		 WHERE id = ? AND visibility = 'internal' AND (is_system = 1 OR tenant_id = ?)
-		   AND NOT EXISTS (SELECT 1 FROM skill_agent_grants WHERE skill_id = ?)`,
-		time.Now().UTC(), skillID, tid, skillID)
+		   AND NOT EXISTS (SELECT 1 FROM skill_agent_grants WHERE skill_id = ?)
+		   AND NOT EXISTS (SELECT 1 FROM skill_user_grants WHERE skill_id = ?)`,
+		time.Now().UTC(), skillID, tid, skillID, skillID)
 	if err != nil {
 		slog.Warn("skill_grants: failed to auto-demote visibility", "skill_id", skillID, "error", err)
 	}

@@ -5,13 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { SkillTenantOverride } from "./skill-tenant-override";
+import { SkillAgentChips } from "./skill-agent-chips";
+import { SkillStatusBadges } from "./skill-status-badges";
+import { getSkillAccessModeBadgeVariant, getSkillAccessModeKey } from "./lib/skill-access-mode";
 import type { SkillInfo } from "./hooks/use-skills";
-
-const visibilityColor: Record<string, string> = {
-  public: "default",
-  internal: "secondary",
-  private: "outline",
-};
 
 interface SkillTableRowProps {
   skill: SkillInfo;
@@ -25,21 +22,25 @@ interface SkillTableRowProps {
   onManageGrants: (skill: SkillInfo) => void;
   onDelete: (skill: SkillInfo) => void;
   onToggle: (skill: SkillInfo, enabled: boolean) => void;
-  onCycleVisibility: (skill: SkillInfo) => void;
+  onCycleAccessMode: (skill: SkillInfo) => void;
   onSetTenantConfig: (id: string, enabled: boolean) => Promise<void>;
   onDeleteTenantConfig: (id: string) => Promise<void>;
 }
 
-/** Single row in the skills table with inline status, visibility, and action controls. */
+/** Single row in the skills table with inline status, access mode, and action controls. */
 export function SkillTableRow({
   skill, tab, hasTenantScope, toggling, selected, onToggleSelect,
-  onView, onEdit, onManageGrants, onDelete, onToggle, onCycleVisibility,
+  onView, onEdit, onManageGrants, onDelete, onToggle, onCycleAccessMode,
   onSetTenantConfig, onDeleteTenantConfig,
 }: SkillTableRowProps) {
   const { t } = useTranslation("skills");
   const isArchived = skill.status === "archived";
   const isDisabled = skill.enabled === false;
-  const hasMissing = (skill.missing_deps?.length ?? 0) > 0;
+  const accessModeKey = getSkillAccessModeKey(skill.visibility);
+  const accessModeLabel = accessModeKey === "unknown"
+    ? t("accessMode.unknown", { value: skill.visibility || t("unknownOwner") })
+    : t(`accessMode.${accessModeKey}`);
+  const accessModeVariant = getSkillAccessModeBadgeVariant(skill.visibility);
 
   return (
     <tr className={cn("border-b last:border-0 hover:bg-muted/30", selected && "bg-primary/5", (isArchived || isDisabled) && "opacity-60")}>
@@ -77,63 +78,27 @@ export function SkillTableRow({
       </td>
       {tab === "custom" && (
         <td className="px-4 py-3 text-sm text-muted-foreground">
-          <div className="flex max-w-[220px] flex-col gap-1">
-            {skill.author && <span className="truncate">{skill.author}</span>}
-            {skill.creator_agent && (
-              <span className="truncate text-2xs">
-                {t("agents.creator")}: {skill.creator_agent.display_name || skill.creator_agent.agent_key || skill.creator_agent.id}
-              </span>
-            )}
-            {skill.manager_agents && skill.manager_agents.length > 0 ? (
-              <span className="truncate text-2xs">
-                {t("agents.managers")}: {skill.manager_agents.map((agent) => agent.display_name || agent.agent_key || agent.id).join(", ")}
-              </span>
-            ) : !skill.author && !skill.creator_agent ? (
-              <span>—</span>
-            ) : null}
-          </div>
+          <SkillAgentChips skill={skill} />
         </td>
       )}
       <td className="px-4 py-3">
-        <div className="flex flex-col gap-1">
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-2xs w-fit",
-              isArchived
-                ? "border-amber-500 text-amber-600 dark:border-amber-600 dark:text-amber-400"
-                : "border-emerald-500 text-emerald-600 dark:border-emerald-600 dark:text-emerald-400",
-            )}
-          >
-            {isArchived ? t("deps.statusArchived") : t("deps.statusActive")}
-          </Badge>
-          {hasMissing && (() => {
-            const deps = skill.missing_deps!.map((d) => d.replace(/^(pip|npm):/, ""));
-            const shown = deps.slice(0, 3);
-            const rest = deps.length - shown.length;
-            return (
-              <span className="text-2xs text-amber-600 dark:text-amber-400 leading-tight">
-                {shown.join(", ")}{rest > 0 && `, +${rest}`}
-              </span>
-            );
-          })()}
-        </div>
+        <SkillStatusBadges skill={skill} />
       </td>
       {tab === "custom" && (
         <td className="px-4 py-3">
           {skill.visibility && (
             skill.id ? (
-              <button type="button" onClick={() => onCycleVisibility(skill)} title={t("visibility.clickToCycle")}>
+              <button type="button" onClick={() => onCycleAccessMode(skill)} title={t("accessMode.clickToCycle")}>
                 <Badge
-                  variant={visibilityColor[skill.visibility] as "default" | "secondary" | "outline"}
+                  variant={accessModeVariant}
                   className="cursor-pointer hover:opacity-80 transition-opacity"
                 >
-                  {skill.visibility}
+                  {accessModeLabel}
                 </Badge>
               </button>
             ) : (
-              <Badge variant={visibilityColor[skill.visibility] as "default" | "secondary" | "outline"}>
-                {skill.visibility}
+              <Badge variant={accessModeVariant}>
+                {accessModeLabel}
               </Badge>
             )
           )}
@@ -161,10 +126,12 @@ export function SkillTableRow({
               )}
               <Button variant="ghost" size="sm" onClick={() => onEdit(skill)} className="gap-1">
                 <Pencil className="h-3.5 w-3.5" />
+                <span className="sr-only">{t("edit.title")}</span>
               </Button>
               {!skill.is_system && (
                 <Button variant="ghost" size="sm" onClick={() => onManageGrants(skill)} className="gap-1" title={t("grants.manage")}>
                   <Users className="h-3.5 w-3.5" />
+                  <span className="sr-only">{t("grants.manage")}</span>
                 </Button>
               )}
               {!skill.is_system && (
@@ -174,6 +141,7 @@ export function SkillTableRow({
                   className="gap-1 text-destructive hover:text-destructive"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
+                  <span className="sr-only">{t("delete.confirmLabel")}</span>
                 </Button>
               )}
             </>

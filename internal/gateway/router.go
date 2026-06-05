@@ -319,6 +319,25 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 }
 
 func (r *MethodRouter) sendConnectResponse(ctx context.Context, client *Client, reqID string) {
+	// Now that the client is authenticated, promote the upgrade-request URL
+	// into the gateway-wide PublicURLSnapshot. RPC methods that advertise URLs
+	// back to external systems (e.g. bitrix.portals.create) read from this
+	// snapshot. Gating on authentication is what blocks the
+	// `Host: evil.com /health` poisoning vector — unauthenticated probes
+	// never make it this far.
+	//
+	// SetIfPublic additionally skips loopback/private hosts so a developer
+	// connecting via an SSH tunnel (Host=localhost:NNNN) doesn't pollute the
+	// snapshot for other admins on the public URL.
+	if r.server.publicURLSnapshot != nil {
+		if url := client.UpgradeURL(); url != "" {
+			if !r.server.publicURLSnapshot.SetIfPublic(url) {
+				slog.Debug("public_url snapshot skipped: non-public upgrade host",
+					"url", url, "user_id", client.UserID())
+			}
+		}
+	}
+
 	// Build scoped ctx that store.IsMasterScope expects: role + tenant.
 	// Owner role short-circuits regardless of tenant; non-owner relies on
 	// tenant_id == MasterTenantID. See store.IsMasterScope at context.go:346.

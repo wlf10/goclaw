@@ -79,23 +79,41 @@ function writeNoRelease(reason) {
   console.log(reason);
 }
 
-const tags = git(["tag", "--merged", "HEAD", "--list", "v[0-9]*"])
-  .split(/\r?\n/)
-  .filter(Boolean)
-  .map(parseVersion)
-  .filter(Boolean)
-  .map((tag) => ({ ...tag, commit: tagCommit(tag.raw) }))
-  .sort(compareVersion)
-  .reverse();
+function releaseTags(args = []) {
+  return git(["tag", ...args, "--list", "v[0-9]*"])
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(parseVersion)
+    .filter(Boolean)
+    .map((tag) => ({ ...tag, commit: tagCommit(tag.raw) }))
+    .sort(compareVersion)
+    .reverse();
+}
 
-const latest = tags[0];
-const latestStable = tags.find((tag) => !tag.preid);
-const latestPrerelease = tags.find((tag) => tag.preid === prerelease);
+const versionTags = releaseTags();
+const mergedTags = releaseTags(["--merged", "HEAD"]);
+const latest = versionTags[0];
+const latestStable = versionTags.find((tag) => !tag.preid);
+function isUsablePrerelease(tag) {
+  return tag.preid !== prerelease || !latestStable || compareBase(tag, latestStable) > 0;
+}
+
+const usableVersionTags = versionTags.filter(isUsablePrerelease);
+const usableMergedTags = mergedTags.filter(isUsablePrerelease);
+const latestPrerelease = usableVersionTags.find((tag) => tag.preid === prerelease);
+const latestMerged = usableMergedTags[0];
+const latestMergedStable = usableMergedTags.find((tag) => !tag.preid);
+const latestMergedPrerelease = usableMergedTags.find((tag) => tag.preid === prerelease);
 const head = git(["rev-parse", "HEAD"]);
-const previousTag = tags.find((tag) => tag.raw !== latest?.raw);
-const repairTag = latest?.preid === prerelease && latest.commit === head ? latest : null;
-const range = latest ? [`${latest.raw}..HEAD`] : [];
-const logRange = repairTag && previousTag ? [`${previousTag.raw}..HEAD`] : range;
+const zero = { major: 0, minor: 0, patch: 0 };
+const initial = parseVersion(initialVersion) || { major: 0, minor: 1, patch: 0 };
+const previousMergedTag = usableMergedTags.find((tag) => tag.raw !== latestMerged?.raw);
+const repairTag = latestMergedPrerelease?.commit === head
+  && (!latestStable || compareBase(latestMergedPrerelease, latestStable) > 0)
+  ? latestMergedPrerelease
+  : null;
+const range = latestMerged ? [`${latestMerged.raw}..HEAD`] : [];
+const logRange = repairTag && previousMergedTag ? [`${previousMergedTag.raw}..HEAD`] : range;
 const log = git(["log", "--format=%B%x1e", ...logRange]);
 const messages = log.split("\x1e").map((message) => message.trim()).filter(Boolean);
 
@@ -126,6 +144,8 @@ if (repairTag) {
   process.exit(0);
 }
 
+const releaseBase = maxBase(latestStable || initial || zero, latestMergedStable || initial || zero);
+
 let level = "";
 for (const message of messages) {
   const next = commitLevel(message);
@@ -138,14 +158,11 @@ for (const message of messages) {
 }
 
 if (!level) {
-  writeNoRelease("No release-worthy conventional commits found since the last release tag.");
+  writeNoRelease("No release-worthy conventional commits found since the last merged release tag.");
   process.exit(0);
 }
 
-const zero = { major: 0, minor: 0, patch: 0 };
-const initial = parseVersion(initialVersion) || { major: 0, minor: 1, patch: 0 };
-const stableBase = latestStable || initial || zero;
-const bumpedBase = bump(stableBase, level);
+const bumpedBase = bump(releaseBase, level);
 const prereleaseBase = latestPrerelease || zero;
 let targetBase = maxBase(bumpedBase, prereleaseBase);
 if (!latest && compareBase(targetBase, initial) < 0) targetBase = initial;
@@ -156,7 +173,7 @@ const nextNumber = compareBase(targetBase, prereleaseBase) === 0
 const version = `${versionText(targetBase)}-${prerelease}.${nextNumber}`;
 const tag = `v${version}`;
 
-if (tags.some((existing) => existing.raw === tag)) {
+if (versionTags.some((existing) => existing.raw === tag)) {
   writeNoRelease(`Computed tag ${tag} already exists.`);
   process.exit(0);
 }

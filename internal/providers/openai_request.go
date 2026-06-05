@@ -157,7 +157,11 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 
 	if len(req.Tools) > 0 {
 		body["tools"] = buildToolsPayload(p.schemaProviderName(), req.Tools)
-		body["tool_choice"] = "auto"
+		if tc, ok := req.Options[OptToolChoice]; ok && tc != nil {
+			body["tool_choice"] = tc
+		} else {
+			body["tool_choice"] = "auto"
+		}
 	}
 
 	// Together returns HTTP 400 on some requests when stream_options is present.

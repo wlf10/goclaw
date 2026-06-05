@@ -133,6 +133,12 @@ func (s *PGAgentStore) Create(ctx context.Context, agent *store.AgentData) error
 	if err != nil {
 		return err
 	}
+	if agent.BudgetMonthlyCents != nil {
+		if err := s.syncAgentBudgetUsageCap(ctx, tenantID, agent.ID, agent.BudgetMonthlyCents); err != nil {
+			_, _ = s.db.ExecContext(ctx, "DELETE FROM agents WHERE id = $1", agent.ID)
+			return err
+		}
+	}
 
 	// Generate embedding for new agent with frontmatter
 	if agent.Frontmatter != "" && s.embProvider != nil {
@@ -188,6 +194,22 @@ func (s *PGAgentStore) GetByID(ctx context.Context, id uuid.UUID) (*store.AgentD
 func (s *PGAgentStore) Update(ctx context.Context, id uuid.UUID, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil
+	}
+	var err error
+	var budgetCents *int
+	rawBudget, syncBudget := updates["budget_monthly_cents"]
+	if syncBudget {
+		budgetCents, err = budgetCentsFromUpdate(rawBudget)
+		if err != nil {
+			return err
+		}
+	}
+	var budgetTenantID uuid.UUID
+	if syncBudget {
+		budgetTenantID, err = s.agentTenantID(ctx, id)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Coerce NOT NULL columns: null → default to prevent constraint violations.
@@ -248,6 +270,11 @@ func (s *PGAgentStore) Update(ctx context.Context, id uuid.UUID, updates map[str
 			return err
 		}
 	}
+	if syncBudget {
+		if err := s.syncAgentBudgetUsageCap(ctx, budgetTenantID, id, budgetCents); err != nil {
+			return err
+		}
+	}
 
 	// Regenerate embedding when frontmatter changes
 	if _, hasFrontmatter := updates["frontmatter"]; hasFrontmatter && s.embProvider != nil {
@@ -260,6 +287,74 @@ func (s *PGAgentStore) Update(ctx context.Context, id uuid.UUID, updates map[str
 		}()
 	}
 	return nil
+}
+
+func (s *PGAgentStore) agentTenantID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	if !store.IsCrossTenant(ctx) {
+		tid := store.TenantIDFromContext(ctx)
+		if tid != uuid.Nil {
+			return tid, nil
+		}
+	}
+	var tenantID uuid.UUID
+	if err := s.db.QueryRowContext(ctx, "SELECT tenant_id FROM agents WHERE id = $1 AND deleted_at IS NULL", id).Scan(&tenantID); err != nil {
+		return uuid.Nil, fmt.Errorf("agent not found: %s", id)
+	}
+	return tenantID, nil
+}
+
+func budgetCentsFromUpdate(v any) (*int, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var cents int
+	switch n := v.(type) {
+	case int:
+		cents = n
+	case int32:
+		cents = int(n)
+	case int64:
+		cents = int(n)
+	case float64:
+		if n != float64(int(n)) {
+			return nil, fmt.Errorf("budget_monthly_cents must be an integer")
+		}
+		cents = int(n)
+	default:
+		return nil, fmt.Errorf("budget_monthly_cents must be an integer")
+	}
+	if cents < 0 {
+		return nil, fmt.Errorf("budget_monthly_cents must be non-negative")
+	}
+	return &cents, nil
+}
+
+func (s *PGAgentStore) syncAgentBudgetUsageCap(ctx context.Context, tenantID, agentID uuid.UUID, budgetCents *int) error {
+	if budgetCents == nil || *budgetCents <= 0 {
+		_, err := s.db.ExecContext(ctx,
+			`DELETE FROM usage_cap_policies
+			 WHERE tenant_id=$1 AND agent_id=$2 AND source=$3`,
+			tenantID, agentID, store.UsageCapSourceAgentBudget)
+		return err
+	}
+	costMicros := int64(*budgetCents) * 10000
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO usage_cap_policies (
+	tenant_id, agent_id, window_key, max_cost_micros, enabled, priority, source
+) VALUES ($1,$2,'month',$3,true,90,$4)
+ON CONFLICT (tenant_id, agent_id) WHERE source = 'agent_budget_monthly_cents'
+DO UPDATE SET
+	window_key='month',
+	provider_id=NULL,
+	provider_type=NULL,
+	model_id=NULL,
+	max_tokens=NULL,
+	max_cost_micros=EXCLUDED.max_cost_micros,
+	enabled=true,
+	priority=EXCLUDED.priority,
+	updated_at=now()`,
+		tenantID, agentID, costMicros, store.UsageCapSourceAgentBudget)
+	return err
 }
 
 func isEmptyOrNullJSONUpdate(v any) bool {

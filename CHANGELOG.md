@@ -6,6 +6,17 @@ All notable changes to GoClaw are documented here. For full documentation, see [
 
 ### Added
 
+- **Built-in skill `workspace-organizing`** — closes #71. Discipline skill that
+  teaches agents to keep personal, team, and delegate workspaces tidy.
+  Enforces a purpose-based folder convention with two modes: flat
+  (`notes/`, `data/`, `outputs/`, `scripts/`, `archive/`) for ad-hoc work
+  and project (`projects/<slug>/{docs,assets,source,reports,research}/`)
+  for named multi-file work. Per-agent namespacing under
+  `shared/<agent_key>/` prevents collisions in team workspaces. Integrates
+  pre-write discovery via `vault_search`, `memory_search`, and
+  `knowledge_graph_search` to surface related files before writing and
+  avoid duplicates; documents Vault scope mirroring and id-routing rules.
+
 - **Skill agent manage grants** — Adds per-agent skill edit/delete grants with
   backend checks, HTTP/WS support, SQLite and PostgreSQL schema updates, and web
   dashboard controls for granting and revoking manage access.
@@ -34,6 +45,37 @@ All notable changes to GoClaw are documented here. For full documentation, see [
   for provider-first model selection.
 
 ### Fixed
+
+- **Multi-attachment messages no longer trigger N agent replies (#63).**
+  Three coalescing surfaces hardened so a single user action produces ONE
+  agent run regardless of how the platform delivers attachments:
+  1. **Bus debouncer** — removed the media-bypass shortcut that fired
+     immediately for any message with attachments; media now goes through
+     the same per-(channel, chatID, senderID, agentID) silence window as
+     text. Media-floor (`max(configured, mediaFloor)`) guarantees a
+     minimum window when attachments are present so multi-file uploads
+     coalesce. Dedup seed prevents the same `MessageID` from being
+     buffered twice on bursty arrivals.
+  2. **Web Chat debouncer** (`internal/gateway/methods/chat_debounce.go`) —
+     parallel structure for `/v1/chat/completions` streaming: per-session
+     buffer + media floor + Take/Discard semantics for flush/cancel
+     control. Merges queued payloads at flush time (latest params win;
+     text concatenated newline-separated).
+  3. **Telegram album aggregator** (`internal/channels/telegram/album_aggregator.go`) —
+     channel-layer coalescing for albums. Telegram delivers a media-group
+     (multiple photos/videos shared as one user action) as N separate
+     `Message` updates sharing a `MediaGroupID`. The aggregator buffers
+     by `(chatID, MediaGroupID)` after all access gates pass, pins the
+     sender on first arrival as a security tripwire, and dispatches ONE
+     `processResolvedMessage` call with all members on a 500ms silence
+     window. `Stop()` synchronously drains pending buffers before
+     `pollCancel` so in-flight albums always publish.
+
+  Cross-surface invariants (see CONTRIBUTING.md → "Multi-attachment
+  coalescing"): no media bypass, media floor on every surface,
+  drop-and-log dual caps, no `time.Timer.Reset` (use `AfterFunc` +
+  `Stop`), sender pin on first arrival, post-stop pushes rejected
+  with warn log.
 
 - **Upstream critical security remediation** — hardens gateway no-token fallback,
   Feishu/Lark and Pancake webhooks, sandbox path/write handling, tenant-admin

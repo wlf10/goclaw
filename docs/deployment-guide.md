@@ -47,10 +47,10 @@ export GOCLAW_DOMAIN=<public-domain>
 | `/var/lib/goclaw/data` | GoClaw persistent data |
 | `/var/lib/goclaw/workspace` | Agent workspace |
 | `/var/lib/goclaw/postgres` | Postgres Docker data |
-| `/usr/local/bin/goclaw-deploy` | Release switch, upgrade, health-check, rollback |
+| `/usr/local/bin/goclaw-deploy` | Release switch, upgrade, health-check, rollback (source: [`scripts/zuey/goclaw-deploy.sh`](../scripts/zuey/goclaw-deploy.sh)) |
 | `/usr/local/bin/goclaw-issue-ssl` | Certbot wrapper for the deployment domain |
 | `/usr/local/bin/goclaw-backup-r2` | Postgres dump, R2 upload, retention cleanup |
-| `/usr/local/bin/goclaw-upgrade-release` | Download and deploy a GitHub Release tarball |
+| `/usr/local/bin/goclaw-upgrade-release` | Download and deploy a GitHub Release tarball (source: [`scripts/zuey/goclaw-upgrade-release.sh`](../scripts/zuey/goclaw-upgrade-release.sh)) |
 
 Secrets are stored only in server env files. Do not copy tokens or database passwords into repo docs.
 
@@ -162,7 +162,7 @@ sudo /usr/local/bin/goclaw-upgrade-release latest
 sudo /usr/local/bin/goclaw-upgrade-release v3.12.0
 ```
 
-The script downloads the Linux amd64 GitHub Release tarball from `digitopvn/goclaw`, follows GitHub release redirects, verifies `CHECKSUMS.sha256`, extracts to `/opt/goclaw/releases/<tag>`, and calls `goclaw-deploy`.
+The script downloads the Linux amd64 GitHub Release tarball from `digitopvn/goclaw`, follows GitHub release redirects, verifies `CHECKSUMS.sha256` when present, falls back to the GitHub release asset SHA256 digest for beta assets without checksum files, extracts to `/opt/goclaw/releases/<tag>`, and calls `goclaw-deploy`. When invoked from the running gateway service, it first re-launches itself as a transient `systemd-run` unit so `goclaw-deploy` can stop/restart `goclaw` without killing the upgrade job.
 
 The HTTP API still accepts only `tag`; it does not accept repo names or custom download URLs.
 
@@ -187,6 +187,29 @@ curl -fsS "https://$GOCLAW_DOMAIN/v1/system/gateway/upgrade/status" \
 Keep upgrade tokens in server env files or secret managers. Do not put real tokens in docs.
 
 The remote trigger endpoint fails closed unless `GOCLAW_UPGRADE_TRIGGER_TOKEN` is configured in the gateway environment.
+
+### Automatic Beta Deploy From `dev`
+
+Pushing or merging into `dev` runs `.github/workflows/dev-beta-release.yaml`. After Go/Web checks pass, the workflow creates the next semantic beta tag, publishes the prerelease assets, promotes beta Docker aliases, then deploys that exact beta tag to the zuey VPS through the gateway upgrade endpoint.
+
+Required GitHub Actions configuration:
+
+| Name | Type | Value |
+|---|---|---|
+| `ZUEY_GOCLAW_URL` | Secret | Public gateway URL, for example `https://goclaw.zuey.me` |
+| `ZUEY_GOCLAW_GATEWAY_TOKEN` | Secret | Gateway bearer token from the server env |
+| `ZUEY_GOCLAW_UPGRADE_TOKEN` | Secret | Upgrade trigger token from the server env |
+| `ZUEY_GOCLAW_USER_ID` | Variable | Optional owner identity, defaults to `system` |
+
+The deploy job sends:
+
+```bash
+POST /v1/system/gateway/upgrade {"tag":"vX.Y.Z-beta.N"}
+GET /v1/system/gateway/upgrade/status
+GET /health
+```
+
+The workflow fails if the upgrade status becomes `failed`, times out, or public health does not return `{"status":"ok"}`.
 
 Manual local-build fallback:
 
@@ -224,6 +247,71 @@ ssh -p "$GOCLAW_SSH_PORT" "$GOCLAW_SSH_USER@$GOCLAW_HOST" "chmod +x /opt/goclaw/
 4. Restart `goclaw`.
 5. Poll `/health`.
 6. Roll back symlink and restart if health fails.
+
+### Self-loop symlink guard
+
+`goclaw-deploy` captures the previous release for rollback via `readlink -f /opt/goclaw/current` before swinging the symlink. If `/opt/goclaw/current` is ever a self-loop (e.g. `current -> current`) or otherwise unresolvable, `readlink -f` exits non-zero. Combined with `set -euo pipefail`, an unguarded call aborts the script before `ln -sfn` runs, so deploys fail silently and zero rollback target is recorded — observed in production on 2026-05-27 where every `deploy_zuey_beta` CI run failed at this step.
+
+The script swallows the readlink failure (`readlink -f ... 2>/dev/null || true`) and logs a warning when the symlink exists but resolves to empty, then proceeds to overwrite. Rollback is skipped in that case because no valid `previous` is available.
+
+If you ever edit `/usr/local/bin/goclaw-deploy` on zuey, preserve this guard:
+
+```bash
+previous=""
+if [ -L /opt/goclaw/current ]; then previous="$(readlink -f /opt/goclaw/current 2>/dev/null || true)"; fi
+if [ -z "$previous" ] && [ -L /opt/goclaw/current ]; then
+  echo "warn: /opt/goclaw/current is a symlink but readlink -f failed (likely self-loop or broken target); overwriting without rollback target" >&2
+fi
+```
+
+The canonical source of this script lives in the repo at [`scripts/zuey/goclaw-deploy.sh`](../scripts/zuey/goclaw-deploy.sh), alongside [`scripts/zuey/goclaw-upgrade-release.sh`](../scripts/zuey/goclaw-upgrade-release.sh). The VPS copies at `/usr/local/bin/goclaw-deploy` and `/usr/local/bin/goclaw-upgrade-release` are downstream replicas. CI auto-syncs both on every beta release via the `Sync zuey ops scripts to VPS` step in `.github/workflows/dev-beta-release.yaml`. For manual sync (off-CI):
+
+```bash
+scp -P 2233 scripts/zuey/goclaw-deploy.sh scripts/zuey/goclaw-upgrade-release.sh \
+  zuey@82.197.71.246:/tmp/
+ssh -p 2233 zuey@82.197.71.246 'bash -s' <<'EOF'
+set -euo pipefail
+ts=$(date +%Y%m%d-%H%M%S)
+for name in goclaw-deploy goclaw-upgrade-release; do
+  if [ -f "/usr/local/bin/$name" ]; then
+    sudo cp -p "/usr/local/bin/$name" "/usr/local/bin/${name}.bak-${ts}"
+  fi
+  sudo install -o root -g root -m 0755 "/tmp/${name}.sh" "/usr/local/bin/$name"
+  sudo bash -n "/usr/local/bin/$name" && echo "OK: $name"
+done
+EOF
+```
+
+Always back up the live copy before overwriting (the `cp -p` line above does this).
+
+### CI auto-sync — required GitHub secrets
+
+The `Sync zuey ops scripts to VPS` step in `dev-beta-release.yaml` runs `scp + sudo install` before triggering the gateway upgrade endpoint. It needs the following repository secrets configured under **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|---|---|
+| `ZUEY_SSH_PRIVATE_KEY_B64` | CI-only ed25519/rsa key, **base64-encoded as a single line** (`base64 -w0 < /path/to/key`). Its public key must be appended to `zuey@82.197.71.246:~/.ssh/authorized_keys`. **Do not reuse the operator's personal key.** Base64 avoids the `error in libcrypto` failure caused by GitHub Secrets normalizing newlines inside multi-line PEM blocks. |
+| `ZUEY_SUDO_PASS` | Same value as `ZUEY_GOCLAW_SUDO_PASS` in the operator's local `.env`; used by `sudo -S` over the SSH session to install scripts. |
+
+Optional repository **variables** (override defaults if the VPS endpoint changes):
+
+| Variable | Default |
+|---|---|
+| `ZUEY_SSH_HOST` | `82.197.71.246` |
+| `ZUEY_SSH_PORT` | `2233` |
+| `ZUEY_SSH_USER` | `zuey` |
+
+To rotate the CI SSH key:
+
+```bash
+ssh-keygen -t ed25519 -f /tmp/ci-zuey-key -N '' -C 'gh-actions-deploy-zuey-beta'
+# add /tmp/ci-zuey-key.pub to zuey:~/.ssh/authorized_keys (consider restricting to scp+install via `command="..."` forced-command)
+# base64-encode the private key on a single line, then paste into the
+# ZUEY_SSH_PRIVATE_KEY_B64 secret:
+base64 -w0 < /tmp/ci-zuey-key  # macOS: `base64 -i /tmp/ci-zuey-key | tr -d '\n'`
+# (copy the single-line output and paste it into the secret value)
+# then `shred -u /tmp/ci-zuey-key*` locally
+```
 
 ## Backup And Restore
 

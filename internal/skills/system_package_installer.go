@@ -13,7 +13,7 @@ var (
 	debPackageNameRE               = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
 	systemLookPath                 = exec.LookPath
 	systemCommandCombinedOutput    = runSystemCommandCombinedOutput
-	aptSystemPackageAliases        = map[string]string{"pip3": "python3-pip", "github-cli": "gh"}
+	aptSystemPackageAliases        = map[string]string{"pip3": "python3-pip", "github-cli": "gh", "go": "golang-go", "golang": "golang-go"}
 	errSystemPackageMgrUnavailable = "system package manager unavailable on this runtime"
 )
 

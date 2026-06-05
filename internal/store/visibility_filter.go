@@ -13,6 +13,8 @@ import (
 //   - "private" skills are only visible to the owner. Three identity strings
 //     are considered (actor, user, sender) to match the same identities
 //     isOwnerOfSkill checks for backward compatibility (#915).
+//   - "internal" skills require explicit grants, which are evaluated in
+//     ListAccessible; this baseline helper hides them.
 //
 // Admin/master-scope bypass is the caller's responsibility — this helper
 // reflects the non-privileged baseline.
@@ -34,6 +36,8 @@ func IsSkillVisibleTo(ctx context.Context, ownerID, visibility string, isSystem 
 		userID := UserIDFromContext(ctx)
 		senderID := SenderIDFromContext(ctx)
 		return ownerID == actorID || ownerID == userID || ownerID == senderID
+	case "internal":
+		return false
 	default:
 		// Unknown enum value: fail closed (hide).
 		return false

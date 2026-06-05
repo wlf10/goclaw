@@ -31,10 +31,12 @@ func NewSQLiteSecureCLIStore(db *sql.DB, encKey string) *SQLiteSecureCLIStore {
 }
 
 const secureCLISelectCols = `id, binary_name, binary_path, description, encrypted_env,
- deny_args, deny_verbose, timeout_seconds, tips, is_global, enabled, created_by, created_at, updated_at`
+ deny_args, deny_verbose, timeout_seconds, tips, is_global, enabled, created_by,
+ adapter_name, created_at, updated_at`
 
 const secureCLISelectColsAliased = `b.id, b.binary_name, b.binary_path, b.description, b.encrypted_env,
- b.deny_args, b.deny_verbose, b.timeout_seconds, b.tips, b.is_global, b.enabled, b.created_by, b.created_at, b.updated_at`
+ b.deny_args, b.deny_verbose, b.timeout_seconds, b.tips, b.is_global, b.enabled, b.created_by,
+ b.adapter_name, b.created_at, b.updated_at`
 
 func (s *SQLiteSecureCLIStore) Create(ctx context.Context, b *store.SecureCLIBinary) error {
 	if err := store.ValidateUserID(b.CreatedBy); err != nil {
@@ -71,14 +73,14 @@ func (s *SQLiteSecureCLIStore) Create(ctx context.Context, b *store.SecureCLIBin
 
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO secure_cli_binaries (id, binary_name, binary_path, description, encrypted_env,
-		 deny_args, deny_verbose, timeout_seconds, tips, is_global, enabled, created_by, created_at, updated_at, tenant_id)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 deny_args, deny_verbose, timeout_seconds, tips, is_global, enabled, created_by, adapter_name, created_at, updated_at, tenant_id)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		b.ID, b.BinaryName, nilStr(derefStr(b.BinaryPath)), b.Description,
 		envBytes,
 		jsonOrEmptyArray(b.DenyArgs), jsonOrEmptyArray(b.DenyVerbose),
 		b.TimeoutSeconds, b.Tips,
 		b.IsGlobal, b.Enabled,
-		b.CreatedBy, nowStr, nowStr, tenantID,
+		b.CreatedBy, b.AdapterName, nowStr, nowStr, tenantID,
 	)
 	return err
 }
@@ -109,7 +111,7 @@ func (s *SQLiteSecureCLIStore) scanRow(row *sql.Row) (*store.SecureCLIBinary, er
 		&b.ID, &b.BinaryName, &binaryPath, &b.Description, &env,
 		&denyArgs, &denyVerbose,
 		&b.TimeoutSeconds, &b.Tips, &b.IsGlobal,
-		&b.Enabled, &b.CreatedBy, &createdAt, &updatedAt,
+		&b.Enabled, &b.CreatedBy, &b.AdapterName, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -154,7 +156,7 @@ func (s *SQLiteSecureCLIStore) scanRows(rows *sql.Rows) ([]store.SecureCLIBinary
 			&b.ID, &b.BinaryName, &binaryPath, &b.Description, &env,
 			&denyArgs, &denyVerbose,
 			&b.TimeoutSeconds, &b.Tips, &b.IsGlobal,
-			&b.Enabled, &b.CreatedBy, &createdAt, &updatedAt,
+			&b.Enabled, &b.CreatedBy, &b.AdapterName, &createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan secure_cli_binaries row: %w", err)
 		}
@@ -186,7 +188,8 @@ var secureCLIAllowedFields = map[string]bool{
 	"binary_name": true, "binary_path": true, "description": true,
 	"encrypted_env": true, "deny_args": true, "deny_verbose": true,
 	"timeout_seconds": true, "tips": true, "is_global": true, "enabled": true,
-	"updated_at": true,
+	"adapter_name": true,
+	"updated_at":   true,
 }
 
 func (s *SQLiteSecureCLIStore) Update(ctx context.Context, id uuid.UUID, updates map[string]any) error {
@@ -303,7 +306,7 @@ func (s *SQLiteSecureCLIStore) scanRowsWithGrants(rows *sql.Rows) ([]store.Secur
 			&b.ID, &b.BinaryName, &binaryPath, &b.Description, &env,
 			&denyArgs, &denyVerbose,
 			&b.TimeoutSeconds, &b.Tips, &b.IsGlobal,
-			&b.Enabled, &b.CreatedBy, &createdAt, &updatedAt,
+			&b.Enabled, &b.CreatedBy, &b.AdapterName, &createdAt, &updatedAt,
 			&grantsJSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan secure_cli_binaries row: %w", err)
@@ -380,34 +383,34 @@ func (s *SQLiteSecureCLIStore) LookupByBinary(ctx context.Context, binaryName st
 
 	query := `SELECT ` + selectCols
 
+	// Project user-credential columns (encrypted_env + credential_type + host_scope).
+	// When userID is empty we cannot reference uc_user.* — emit NULL placeholders
+	// so the scan column count stays stable.
+	hasUserJoin := userID != "" && agentID != nil
+	hasUserJoinNoAgent := userID != "" && agentID == nil
+
+	if hasUserJoin || hasUserJoinNoAgent {
+		query += `, uc_user.encrypted_env AS user_env, uc_user.credential_type AS user_cred_type, uc_user.host_scope AS user_host_scope FROM secure_cli_binaries b`
+	} else {
+		query += `, NULL AS user_env, NULL AS user_cred_type, NULL AS user_host_scope FROM secure_cli_binaries b`
+	}
+
 	// LEFT JOIN agent grant
 	if agentID != nil {
-		query += `, uc_user.encrypted_env AS user_env FROM secure_cli_binaries b`
 		query += ` LEFT JOIN secure_cli_agent_grants g ON g.binary_id = b.id AND g.agent_id = ?`
 		args = append(args, *agentID)
 	} else {
-		query += `, NULL AS user_env FROM secure_cli_binaries b`
 		query += ` LEFT JOIN secure_cli_agent_grants g ON 0`
 	}
 
-	// LEFT JOIN user credentials
-	if userID != "" {
+	// LEFT JOIN user credentials (only when we project uc_user.*)
+	if hasUserJoin || hasUserJoinNoAgent {
 		if isCross {
 			query += ` LEFT JOIN secure_cli_user_credentials uc_user ON uc_user.binary_id = b.id AND uc_user.user_id = ?`
 			args = append(args, userID)
 		} else {
 			query += ` LEFT JOIN secure_cli_user_credentials uc_user ON uc_user.binary_id = b.id AND uc_user.user_id = ? AND uc_user.tenant_id = ?`
 			args = append(args, userID, tid)
-		}
-	} else {
-		// Rewrite: no user_env JOIN needed, replace alias reference
-		// Already handled by NULL above — but need to adjust query structure
-		// We need uc_user alias to not appear in FROM if no userID
-		// Simplest: LEFT JOIN on impossible condition
-		if agentID == nil {
-			// already have NULL AS user_env, skip join
-		} else {
-			query += ` LEFT JOIN secure_cli_user_credentials uc_user ON 0`
 		}
 	}
 
@@ -449,15 +452,16 @@ func (s *SQLiteSecureCLIStore) scanRowWithGrantAndUserEnv(row *sql.Row) (*store.
 	var grantID *uuid.UUID
 	var grantEncEnv []byte
 	var userEnv []byte
+	var userCredType, userHostScope *string
 	var createdAt, updatedAt sqliteTime
 
 	err := row.Scan(
 		&b.ID, &b.BinaryName, &binaryPath, &b.Description, &env,
 		&denyArgs, &denyVerbose,
 		&b.TimeoutSeconds, &b.Tips, &b.IsGlobal,
-		&b.Enabled, &b.CreatedBy, &createdAt, &updatedAt,
+		&b.Enabled, &b.CreatedBy, &b.AdapterName, &createdAt, &updatedAt,
 		&grantDenyArgs, &grantDenyVerbose, &grantTimeout, &grantTips, &grantEnabled, &grantID, &grantEncEnv,
-		&userEnv,
+		&userEnv, &userCredType, &userHostScope,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -512,6 +516,10 @@ func (s *SQLiteSecureCLIStore) scanRowWithGrantAndUserEnv(row *sql.Row) (*store.
 			b.UserEnv = []byte(decrypted)
 		}
 	}
+
+	// Typed-credential metadata from the joined user-credential row.
+	b.UserCredentialType = userCredType
+	b.UserHostScope = userHostScope
 
 	return &b, nil
 }
@@ -617,7 +625,7 @@ func (s *SQLiteSecureCLIStore) ListForAgent(ctx context.Context, agentID uuid.UU
 			&b.ID, &b.BinaryName, &binaryPath, &b.Description, &env,
 			&denyArgs, &denyVerbose,
 			&b.TimeoutSeconds, &b.Tips, &b.IsGlobal,
-			&b.Enabled, &b.CreatedBy, &createdAt, &updatedAt,
+			&b.Enabled, &b.CreatedBy, &b.AdapterName, &createdAt, &updatedAt,
 			&grantDenyArgs, &grantDenyVerbose, &grantTimeout, &grantTips, &grantID, &grantEncEnv,
 		); err != nil {
 			return nil, fmt.Errorf("scan secure_cli_binaries row: %w", err)

@@ -116,10 +116,19 @@ func WithCredentialUserID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, CredentialUserIDKey, id)
 }
 
+// ExplicitCredentialUserIDFromContext returns only the explicitly injected credential identity.
+// Unlike CredentialUserIDFromContext, it does not fall back to UserID.
+func ExplicitCredentialUserIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(CredentialUserIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // CredentialUserIDFromContext returns the resolved identity for credential lookups.
 // Falls back to RunContext.CredentialUserID, then UserIDFromContext.
 func CredentialUserIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(CredentialUserIDKey).(string); ok && v != "" {
+	if v := ExplicitCredentialUserIDFromContext(ctx); v != "" {
 		return v
 	}
 	if rc := RunContextFromCtx(ctx); rc != nil && rc.CredentialUserID != "" {

@@ -16,7 +16,7 @@ var schemaSQL string
 
 // SchemaVersion is the current SQLite schema version.
 // Bump this when adding new migration steps below.
-const SchemaVersion = 37
+const SchemaVersion = 42
 
 // migrations maps version → SQL to apply when upgrading FROM that version.
 // schema.sql always represents the LATEST full schema (for fresh DBs).
@@ -720,6 +720,58 @@ CREATE INDEX IF NOT EXISTS idx_heartbeats_due
 	// fallback is to rebuild the table without the column — see runbook
 	// docs/runbooks/packages-migration-rollback.md.
 	26: `ALTER TABLE secure_cli_agent_grants ADD COLUMN encrypted_env BLOB;`,
+
+	// Version 37 → 38: bitrix_portals table (mirrors PG migration 000068).
+	// Stores per-tenant OAuth credentials + refresh state for Bitrix24 portals.
+	37: `CREATE TABLE IF NOT EXISTS bitrix_portals (
+    id           TEXT NOT NULL PRIMARY KEY,
+    tenant_id    TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name         VARCHAR(100) NOT NULL,
+    domain       VARCHAR(255) NOT NULL,
+    credentials  BLOB,
+    state        BLOB,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bitrix_portals_tenant_name
+    ON bitrix_portals (tenant_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bitrix_portals_domain
+    ON bitrix_portals (LOWER(TRIM(domain)));`,
+
+	// Version 38 → 39: selected browser cookie sync.
+	38: `CREATE TABLE IF NOT EXISTS browser_cookies (
+    id              TEXT NOT NULL PRIMARY KEY,
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id         VARCHAR(255) NOT NULL,
+    agent_id        VARCHAR(255) NOT NULL,
+    domain          TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    path            TEXT NOT NULL DEFAULT '/',
+    encrypted_value TEXT NOT NULL,
+    secure          INTEGER NOT NULL DEFAULT 0,
+    http_only       INTEGER NOT NULL DEFAULT 0,
+    same_site       VARCHAR(32) NOT NULL DEFAULT '',
+    expires_at      TEXT,
+    source          VARCHAR(64) NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CHECK (TRIM(domain) <> ''),
+    CHECK (TRIM(name) <> ''),
+    CHECK (TRIM(path) <> '')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_cookies_scope_unique
+    ON browser_cookies (tenant_id, user_id, agent_id, domain, path, name);
+CREATE INDEX IF NOT EXISTS idx_browser_cookies_scope_domain
+    ON browser_cookies (tenant_id, user_id, agent_id, domain);
+CREATE INDEX IF NOT EXISTS idx_browser_cookies_expires_at
+    ON browser_cookies (expires_at);`,
+
+	// Version 39 → 40: credential adapter framework — credential_type on user creds.
+	39: `ALTER TABLE secure_cli_user_credentials ADD COLUMN credential_type TEXT;`,
+	// Version 40 → 41: credential adapter framework — host_scope on user creds.
+	40: `ALTER TABLE secure_cli_user_credentials ADD COLUMN host_scope TEXT;`,
+	// Version 41 → 42: credential adapter framework — adapter_name on binaries.
+	41: `ALTER TABLE secure_cli_binaries ADD COLUMN adapter_name TEXT;`,
 }
 
 // addHooksTables is the SQLite incremental migration for schema v19 → v20.
@@ -998,6 +1050,12 @@ func idempotentColumnMigration(version int) (string, string, bool) {
 		return "agents", "model_fallback", true
 	case 34:
 		return "skill_agent_grants", "can_manage", true
+	case 39:
+		return "secure_cli_user_credentials", "credential_type", true
+	case 40:
+		return "secure_cli_user_credentials", "host_scope", true
+	case 41:
+		return "secure_cli_binaries", "adapter_name", true
 	default:
 		return "", "", false
 	}

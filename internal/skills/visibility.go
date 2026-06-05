@@ -7,8 +7,9 @@ import (
 
 // Skill visibility values.
 const (
-	VisibilityPrivate = "private"
-	VisibilityPublic  = "public"
+	VisibilityPrivate  = "private"
+	VisibilityInternal = "internal"
+	VisibilityPublic   = "public"
 )
 
 // DefaultVisibility is assigned when a caller does not specify one.
@@ -16,10 +17,12 @@ const (
 const DefaultVisibility = VisibilityPrivate
 
 // validVisibilities enumerates the accepted enum values. System skills use
-// "public"; user-published skills default to "private".
+// "public"; grant-scoped skills use "internal"; user-published skills default
+// to "private".
 var validVisibilities = map[string]struct{}{
-	VisibilityPrivate: {},
-	VisibilityPublic:  {},
+	VisibilityPrivate:  {},
+	VisibilityInternal: {},
+	VisibilityPublic:   {},
 }
 
 // NormalizeVisibility lowercases + trims the input and returns the default
@@ -39,7 +42,7 @@ func ValidateVisibility(v string) error {
 		return nil
 	}
 	if _, ok := validVisibilities[strings.ToLower(strings.TrimSpace(v))]; !ok {
-		return fmt.Errorf("invalid visibility %q: must be one of private, public", v)
+		return fmt.Errorf("invalid visibility %q: must be one of private, internal, public", v)
 	}
 	return nil
 }

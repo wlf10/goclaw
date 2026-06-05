@@ -442,7 +442,7 @@ All CRUD endpoints require `Authorization: Bearer <token>` and `X-GoClaw-User-Id
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/v1/skills` | List skills |
-| POST | `/v1/skills/upload` | Upload skill ZIP (max 20 MB) |
+| POST | `/v1/skills/upload` | Upload skill ZIP (configurable, default 20 MB, max 500 MB) |
 | DELETE | `/v1/skills/{id}` | Delete a skill |
 
 **Traces** (`/v1/traces`):

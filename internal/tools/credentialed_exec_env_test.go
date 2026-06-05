@@ -43,3 +43,24 @@ func TestMergeCredentialedEnvFailsClosedOnInvalidUserEnv(t *testing.T) {
 		t.Fatal("expected invalid per-user env JSON to fail closed")
 	}
 }
+
+func TestMergeCredentialedEnvFlattensSensitiveValueEntries(t *testing.T) {
+	binary := &store.SecureCLIBinary{
+		EncryptedEnv: []byte(`{
+			"TOKEN":{"kind":"sensitive","value":"secret"},
+			"PUBLIC_BASE_URL":{"kind":"value","value":"https://goclaw.sh"}
+		}`),
+		UserEnv: []byte(`{"PUBLIC_BASE_URL":{"kind":"value","value":"https://user.example"}}`),
+	}
+
+	env, err := mergeCredentialedEnv(binary)
+	if err != nil {
+		t.Fatalf("mergeCredentialedEnv() error = %v", err)
+	}
+	if env["TOKEN"] != "secret" {
+		t.Fatalf("TOKEN = %q", env["TOKEN"])
+	}
+	if env["PUBLIC_BASE_URL"] != "https://user.example" {
+		t.Fatalf("PUBLIC_BASE_URL = %q", env["PUBLIC_BASE_URL"])
+	}
+}

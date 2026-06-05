@@ -253,6 +253,28 @@ func (a *AgentData) ParseAllowImageGeneration() bool {
 	return *bag.AllowImageGeneration
 }
 
+// ParseInboundDebounceMs returns the per-agent inbound debounce override.
+// Missing or malformed config means "inherit global gateway.inbound_debounce_ms".
+func (a *AgentData) ParseInboundDebounceMs() (int, bool) {
+	if a == nil {
+		return 0, false
+	}
+	return ParseInboundDebounceMsFromOtherConfig(a.OtherConfig)
+}
+
+func ParseInboundDebounceMsFromOtherConfig(raw json.RawMessage) (int, bool) {
+	if len(raw) <= 2 {
+		return 0, false
+	}
+	var bag struct {
+		InboundDebounceMs *int `json:"inbound_debounce_ms"`
+	}
+	if json.Unmarshal(raw, &bag) != nil || bag.InboundDebounceMs == nil {
+		return 0, false
+	}
+	return *bag.InboundDebounceMs, true
+}
+
 // validPromptModes is the set of allowed prompt_mode values.
 var validPromptModes = map[string]bool{
 	"full": true, "task": true, "minimal": true, "none": true,

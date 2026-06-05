@@ -168,7 +168,7 @@ func (p *CodexProvider) ChatStream(ctx context.Context, req ChatRequest, onChunk
 	}
 
 	if err := sse.Err(); err != nil {
-		return nil, fmt.Errorf("%s: stream read error: %w", p.name, err)
+		return result, fmt.Errorf("%s: stream read error: %w", p.name, err)
 	}
 
 	// Assemble generated images from image accumulator into ChatResponse.

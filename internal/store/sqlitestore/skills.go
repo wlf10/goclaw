@@ -218,13 +218,13 @@ func buildSkillInfo(id, name, slug string, desc *string, version int, baseDir st
 	}
 	skillDir := fmt.Sprintf("%s/%s/%d", baseDir, slug, version)
 	if filePath != nil && *filePath != "" {
-		skillDir = *filePath
+		skillDir = store.SkillBaseDir(*filePath)
 	}
 	return store.SkillInfo{
 		ID:          id,
 		Name:        name,
 		Slug:        slug,
-		Path:        skillDir + "/SKILL.md",
+		Path:        store.SkillMarkdownPath(skillDir),
 		BaseDir:     skillDir,
 		Source:      "managed",
 		Description: d,

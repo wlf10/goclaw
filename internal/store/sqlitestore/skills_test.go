@@ -216,6 +216,40 @@ func TestSQLiteSkillStore_RevokeFromAgentDoesNotDemoteCrossTenantSkill(t *testin
 	}
 }
 
+func TestSQLiteSkillStore_RevokeFromAgentKeepsInternalWhenUserGrantRemains(t *testing.T) {
+	_, skillStore, db := newTestSQLiteSkillStoreWithDB(t)
+	tenantID, agentID := seedSQLiteTenantAgent(t, db)
+	ctx := store.WithTenantID(context.Background(), tenantID)
+
+	skillID, err := skillStore.CreateSkillManaged(ctx, store.SkillCreateParams{
+		Name:       "Shared Internal Skill",
+		Slug:       "shared-internal-skill-" + tenantID.String()[:8],
+		OwnerID:    "owner-user",
+		Visibility: "internal",
+		FilePath:   filepath.Join(t.TempDir(), "shared-internal-skill", "1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkillManaged error: %v", err)
+	}
+	if err := skillStore.GrantToAgent(ctx, skillID, agentID, 1, "owner-user", true); err != nil {
+		t.Fatalf("GrantToAgent error: %v", err)
+	}
+	if err := skillStore.GrantToUser(ctx, skillID, "granted-user", "owner-user"); err != nil {
+		t.Fatalf("GrantToUser error: %v", err)
+	}
+	if err := skillStore.RevokeFromAgent(ctx, skillID, agentID); err != nil {
+		t.Fatalf("RevokeFromAgent error: %v", err)
+	}
+
+	got, ok := skillStore.GetSkillByID(ctx, skillID)
+	if !ok {
+		t.Fatal("GetSkillByID returned !ok")
+	}
+	if got.Visibility != "internal" {
+		t.Fatalf("visibility after revoking last agent grant = %q, want internal because a user grant remains", got.Visibility)
+	}
+}
+
 func TestSQLiteSkillStore_ListWithGrantStatusIgnoresForeignTenantGrant(t *testing.T) {
 	_, skillStore, db := newTestSQLiteSkillStoreWithDB(t)
 	tenantA, _ := seedSQLiteTenantAgent(t, db)
@@ -251,6 +285,97 @@ func TestSQLiteSkillStore_ListWithGrantStatusIgnoresForeignTenantGrant(t *testin
 		}
 	}
 	t.Fatalf("system skill %s not returned for tenant A", skillID)
+}
+
+func TestSQLiteSkillStore_ListAccessibleHonorsAccessModes(t *testing.T) {
+	_, skillStore, db := newTestSQLiteSkillStoreWithDB(t)
+	tenantID, agentA := seedSQLiteTenantAgent(t, db)
+	agentB := uuid.New()
+	if _, err := db.Exec(
+		`INSERT INTO agents (id, tenant_id, agent_key, agent_type, status, provider, model, owner_id)
+		 VALUES (?, ?, ?, 'predefined', 'active', 'test', 'test-model', 'user-2')`,
+		agentB.String(), tenantID.String(), "agent-"+agentB.String()[:8],
+	); err != nil {
+		t.Fatalf("insert second agent: %v", err)
+	}
+	ctx := store.WithTenantID(context.Background(), tenantID)
+
+	privateID, err := skillStore.CreateSkillManaged(ctx, store.SkillCreateParams{
+		Name:       "Owner Only Skill",
+		Slug:       "owner-only-skill-" + tenantID.String()[:8],
+		OwnerID:    "owner-user",
+		Visibility: "private",
+		FilePath:   filepath.Join(t.TempDir(), "owner-only", "1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkillManaged private error: %v", err)
+	}
+	internalID, err := skillStore.CreateSkillManaged(ctx, store.SkillCreateParams{
+		Name:       "Granted Agents Skill",
+		Slug:       "granted-agents-skill-" + tenantID.String()[:8],
+		OwnerID:    "owner-user",
+		Visibility: "internal",
+		FilePath:   filepath.Join(t.TempDir(), "granted-agents", "1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkillManaged internal error: %v", err)
+	}
+	publicID, err := skillStore.CreateSkillManaged(ctx, store.SkillCreateParams{
+		Name:       "Tenant Wide Skill",
+		Slug:       "tenant-wide-skill-" + tenantID.String()[:8],
+		OwnerID:    "owner-user",
+		Visibility: "public",
+		FilePath:   filepath.Join(t.TempDir(), "tenant-wide", "1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSkillManaged public error: %v", err)
+	}
+	if err := skillStore.GrantToAgent(ctx, internalID, agentA, 1, "owner-user", true); err != nil {
+		t.Fatalf("GrantToAgent internal error: %v", err)
+	}
+
+	viewerA := listAccessibleSlugs(t, skillStore, ctx, agentA, "viewer-user")
+	if !viewerA["granted-agents-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("granted agent did not receive internal skill; got %v", viewerA)
+	}
+	if !viewerA["tenant-wide-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("agent did not receive public skill; got %v", viewerA)
+	}
+	if viewerA["owner-only-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("non-owner received private skill; got %v", viewerA)
+	}
+
+	viewerB := listAccessibleSlugs(t, skillStore, ctx, agentB, "viewer-user")
+	if viewerB["granted-agents-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("ungranted agent received internal skill; got %v", viewerB)
+	}
+	if !viewerB["tenant-wide-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("ungranted agent did not receive public skill; got %v", viewerB)
+	}
+
+	owner := listAccessibleSlugs(t, skillStore, ctx, agentB, "owner-user")
+	if !owner["owner-only-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("owner did not receive private skill %s; got %v", privateID, owner)
+	}
+	if !owner["tenant-wide-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("owner did not receive public skill %s; got %v", publicID, owner)
+	}
+	if owner["granted-agents-skill-"+tenantID.String()[:8]] {
+		t.Fatalf("owner received internal skill without grant; got %v", owner)
+	}
+}
+
+func listAccessibleSlugs(t *testing.T, skillStore *SQLiteSkillStore, ctx context.Context, agentID uuid.UUID, userID string) map[string]bool {
+	t.Helper()
+	skills, err := skillStore.ListAccessible(ctx, agentID, userID)
+	if err != nil {
+		t.Fatalf("ListAccessible error: %v", err)
+	}
+	slugs := make(map[string]bool, len(skills))
+	for _, skill := range skills {
+		slugs[skill.Slug] = true
+	}
+	return slugs
 }
 
 func newTestSQLiteSkillStore(t *testing.T) (context.Context, *SQLiteSkillStore) {

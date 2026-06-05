@@ -190,6 +190,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.beta_version.outputs.tag }}
         run: |
+          (cd artifacts && sha256sum goclaw-*.tar.gz > CHECKSUMS.sha256)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" \
               --title "GoClaw $TAG" \
@@ -325,3 +326,179 @@ jobs:
           else
             echo "::notice::Docker Hub secrets not configured; promoted GHCR beta aliases only."
           fi
+
+  deploy_zuey_beta:
+    needs: [beta_version, publish_release]
+    if: needs.beta_version.outputs.released == 'true' && github.repository == 'digitopvn/goclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GOCLAW_DEPLOY_URL: ${{ secrets.ZUEY_GOCLAW_URL }}
+      GOCLAW_GATEWAY_TOKEN: ${{ secrets.ZUEY_GOCLAW_GATEWAY_TOKEN }}
+      GOCLAW_UPGRADE_TOKEN: ${{ secrets.ZUEY_GOCLAW_UPGRADE_TOKEN }}
+      GOCLAW_DEPLOY_USER_ID: ${{ vars.ZUEY_GOCLAW_USER_ID || 'system' }}
+      TAG: ${{ needs.beta_version.outputs.tag }}
+      ZUEY_SSH_HOST: ${{ vars.ZUEY_SSH_HOST || '82.197.71.246' }}
+      ZUEY_SSH_PORT: ${{ vars.ZUEY_SSH_PORT || '2233' }}
+      ZUEY_SSH_USER: ${{ vars.ZUEY_SSH_USER || 'zuey' }}
+    steps:
+      - name: Validate deploy configuration
+        run: |
+          missing=0
+          for name in GOCLAW_DEPLOY_URL GOCLAW_GATEWAY_TOKEN GOCLAW_UPGRADE_TOKEN TAG; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::${name} is not configured"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Checkout repository (for VPS script sync)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.beta_version.outputs.tag }}
+
+      - name: Sync zuey ops scripts to VPS
+        env:
+          ZUEY_SSH_PRIVATE_KEY_B64: ${{ secrets.ZUEY_SSH_PRIVATE_KEY_B64 }}
+          ZUEY_SUDO_PASS: ${{ secrets.ZUEY_SUDO_PASS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ZUEY_SSH_PRIVATE_KEY_B64:-}" || -z "${ZUEY_SUDO_PASS:-}" ]]; then
+            echo "::warning::ZUEY_SSH_PRIVATE_KEY_B64 or ZUEY_SUDO_PASS not configured; skipping VPS script sync. Store the private key as base64 (\`base64 -w0 < /path/to/key\`) in the ZUEY_SSH_PRIVATE_KEY_B64 secret to keep /usr/local/bin/goclaw-deploy and /usr/local/bin/goclaw-upgrade-release in sync with the repo on every beta deploy."
+            exit 0
+          fi
+
+          # Verify the two scripts exist in the checked-out tag
+          for f in scripts/zuey/goclaw-deploy.sh scripts/zuey/goclaw-upgrade-release.sh; do
+            test -f "$f" || { echo "::error::$f missing in repo"; exit 1; }
+            bash -n "$f" || { echo "::error::$f has syntax error"; exit 1; }
+          done
+
+          # Stage SSH key: base64-decode, write with 0600, validate format.
+          # Why base64: GitHub Secrets storage round-trips can normalize/strip
+          # newlines in PEM blocks, producing `error in libcrypto` on load.
+          # Base64 is a single line, immune to whitespace mangling.
+          install -m 700 -d ~/.ssh
+          # Create the key file with a tight umask so it is born at 0600 —
+          # avoids the brief 0644 window between `>` redirect and `chmod`.
+          if ! ( umask 077 && printf %s "$ZUEY_SSH_PRIVATE_KEY_B64" | base64 -d > ~/.ssh/id_zuey ) 2>/dev/null; then
+            echo "::error::ZUEY_SSH_PRIVATE_KEY_B64 is not valid base64. Regenerate with: base64 -w0 < /path/to/private_key"
+            exit 1
+          fi
+          if ! ssh-keygen -y -f ~/.ssh/id_zuey >/dev/null 2>&1; then
+            echo "::error::Decoded SSH key is not a valid OpenSSH/PEM private key. Verify the source file is a real private key and re-encode."
+            rm -f ~/.ssh/id_zuey
+            exit 1
+          fi
+          ssh-keyscan -p "$ZUEY_SSH_PORT" -H "$ZUEY_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          SSH_BASE=(-i ~/.ssh/id_zuey -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+
+          # Upload (-O selects legacy scp protocol; OpenSSH 9.x defaults to sftp
+          # which is fine here, but -O is portable across runner image versions)
+          scp -O -P "$ZUEY_SSH_PORT" "${SSH_BASE[@]}" \
+            scripts/zuey/goclaw-deploy.sh \
+            scripts/zuey/goclaw-upgrade-release.sh \
+            "${ZUEY_SSH_USER}@${ZUEY_SSH_HOST}:/tmp/"
+
+          # Install on host: backup-if-changed → install (root:root 0755) →
+          # syntax check. The sudo password is shell-quoted via printf %q and
+          # interpolated into the remote command line; the SSH channel is
+          # encrypted and GitHub Actions auto-masks the secret in logs.
+          # sudo -S reads from stdin and does not echo the password.
+          quoted_pass=$(printf %q "$ZUEY_SUDO_PASS")
+          ssh -p "$ZUEY_SSH_PORT" "${SSH_BASE[@]}" "${ZUEY_SSH_USER}@${ZUEY_SSH_HOST}" \
+            "SUDOPASS=$quoted_pass bash -s" <<'REMOTE'
+          set -euo pipefail
+          ts=$(date +%Y%m%d-%H%M%S)
+          for name in goclaw-deploy goclaw-upgrade-release; do
+            src="/tmp/${name}.sh"
+            dst="/usr/local/bin/${name}"
+            if [ ! -f "$src" ]; then echo "::error::missing $src"; exit 1; fi
+            if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+              echo "no change: $name"
+              rm -f "$src"
+              continue
+            fi
+            if [ -f "$dst" ]; then
+              echo "$SUDOPASS" | sudo -S cp -p "$dst" "${dst}.bak-${ts}"
+            fi
+            echo "$SUDOPASS" | sudo -S install -o root -g root -m 0755 "$src" "$dst"
+            echo "$SUDOPASS" | sudo -S bash -n "$dst"
+            rm -f "$src"
+            echo "installed: $name"
+          done
+          REMOTE
+
+          # Clean up the private key from the runner FS
+          shred -u ~/.ssh/id_zuey 2>/dev/null || rm -f ~/.ssh/id_zuey
+
+      - name: Trigger zuey gateway upgrade
+        run: |
+          base_url="${GOCLAW_DEPLOY_URL%/}"
+          body="$(mktemp)"
+          payload="$(printf '{"tag":"%s"}' "$TAG")"
+          status_code="$(curl -sS --retry 3 --retry-delay 2 \
+            -o "$body" \
+            -w "%{http_code}" \
+            -X POST "${base_url}/v1/system/gateway/upgrade" \
+            -H "Authorization: Bearer ${GOCLAW_GATEWAY_TOKEN}" \
+            -H "X-GoClaw-Upgrade-Token: ${GOCLAW_UPGRADE_TOKEN}" \
+            -H "X-GoClaw-User-Id: ${GOCLAW_DEPLOY_USER_ID}" \
+            -H "Content-Type: application/json" \
+            --data "$payload")"
+          if [[ "$status_code" != "202" ]]; then
+            echo "::error::gateway upgrade trigger failed with HTTP ${status_code}"
+            cat "$body"
+            exit 1
+          fi
+          cat "$body"
+
+      - name: Wait for zuey gateway upgrade
+        run: |
+          base_url="${GOCLAW_DEPLOY_URL%/}"
+          for attempt in {1..90}; do
+            status_err="$(mktemp)"
+            status_json="$(curl -fsS --retry 3 --retry-delay 2 \
+              -H "Authorization: Bearer ${GOCLAW_GATEWAY_TOKEN}" \
+              -H "X-GoClaw-Upgrade-Token: ${GOCLAW_UPGRADE_TOKEN}" \
+              -H "X-GoClaw-User-Id: ${GOCLAW_DEPLOY_USER_ID}" \
+              "${base_url}/v1/system/gateway/upgrade/status" 2>"$status_err" || true)"
+            if [[ -z "$status_json" ]]; then
+              echo "upgrade status unavailable; attempt ${attempt}/90"
+              cat "$status_err"
+              rm -f "$status_err"
+              sleep 10
+              continue
+            fi
+            rm -f "$status_err"
+            state="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("state", ""))' <<< "$status_json" 2>/dev/null || true)"
+            if [[ "$state" == "succeeded" ]]; then
+              echo "$status_json"
+              exit 0
+            fi
+            if [[ "$state" == "failed" ]]; then
+              echo "::error::gateway upgrade failed"
+              echo "$status_json"
+              exit 1
+            fi
+            echo "upgrade state=${state:-unknown}; attempt ${attempt}/90"
+            sleep 10
+          done
+          echo "::error::gateway upgrade timed out"
+          exit 1
+
+      - name: Verify public health
+        run: |
+          base_url="${GOCLAW_DEPLOY_URL%/}"
+          health_json="$(curl -fsS --retry 5 --retry-delay 3 "${base_url}/health")"
+          status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' <<< "$health_json")"
+          if [[ "$status" != "ok" ]]; then
+            echo "::error::unexpected health response"
+            echo "$health_json"
+            exit 1
+          fi
+          echo "$health_json"

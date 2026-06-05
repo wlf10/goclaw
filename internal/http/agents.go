@@ -185,17 +185,19 @@ func (h *AgentsHandler) adminMiddleware(next http.HandlerFunc) http.HandlerFunc 
 
 func (h *AgentsHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	userID := store.UserIDFromContext(r.Context())
-	if userID == "" {
-		locale := store.LocaleFromContext(r.Context())
-		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgUserIDHeader))
-		return
-	}
 
 	var agents []store.AgentData
 	var err error
-	if h.isOwnerUser(userID) {
+	switch {
+	case userID == "" && permissions.HasMinRole(permissions.Role(store.RoleFromContext(r.Context())), permissions.RoleAdmin):
+		agents, err = h.agents.List(r.Context(), "")
+	case userID == "":
+		locale := store.LocaleFromContext(r.Context())
+		writeError(w, http.StatusBadRequest, protocol.ErrInvalidRequest, i18n.T(locale, i18n.MsgUserIDHeader))
+		return
+	case h.isOwnerUser(userID):
 		agents, err = h.agents.List(r.Context(), "") // owners see all agents
-	} else {
+	default:
 		agents, err = h.agents.ListAccessible(r.Context(), userID)
 	}
 	if err != nil {

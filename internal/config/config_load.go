@@ -63,6 +63,15 @@ func isLoopbackGatewayHost(host string) bool {
 	return err == nil && addr.IsLoopback()
 }
 
+func parseEnvBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // Default returns a Config with sensible defaults.
 func Default() *Config {
 	return &Config{
@@ -97,14 +106,18 @@ func Default() *Config {
 		},
 		Tools: ToolsConfig{
 			Browser: BrowserToolConfig{
-				Enabled:  true,
-				Headless: true,
+				Enabled:           true,
+				Headless:          true,
+				CookieSyncEnabled: true,
 			},
 			ExecApproval: ExecApprovalCfg{
 				Security: "full",
 				Ask:      "off",
 			},
 			RateLimitPerHour: 150,
+		},
+		Skills: SkillsConfig{
+			MaxUploadSizeMB: DefaultSkillMaxUploadSizeMB,
 		},
 		Sessions: SessionsConfig{},
 	}
@@ -233,6 +246,26 @@ func (c *Config) applyEnvOverrides() {
 			c.Gateway.Port = port
 		}
 	}
+	if v := os.Getenv("GOCLAW_SKILLS_MAX_UPLOAD_SIZE_MB"); v != "" {
+		if mb, err := strconv.Atoi(v); err == nil {
+			c.Skills.MaxUploadSizeMB = ClampSkillMaxUploadSizeMB(mb)
+		}
+	}
+	envBoolPtr := func(key string, dst **bool) {
+		if v := os.Getenv(key); v != "" {
+			b := parseEnvBool(v)
+			*dst = &b
+		}
+	}
+	envBool := func(key string, dst *bool) {
+		if v := os.Getenv(key); v != "" {
+			*dst = parseEnvBool(v)
+		}
+	}
+	envBoolPtr("GOCLAW_SKILLS_SLASH_COMMANDS_ENABLED", &c.Skills.SlashCommands.Enabled)
+	envBoolPtr("GOCLAW_SKILLS_SLASH_COMMANDS_SUGGEST_NOT_FOUND", &c.Skills.SlashCommands.SuggestNotFound)
+	envBool("GOCLAW_SKILLS_SLASH_COMMANDS_PARTIAL_MATCHING", &c.Skills.SlashCommands.PartialMatching)
+	envStr("GOCLAW_SKILLS_SLASH_COMMANDS_PREFIX", &c.Skills.SlashCommands.Prefix)
 
 	// Database
 	envStr("GOCLAW_POSTGRES_DSN", &c.Database.PostgresDSN)

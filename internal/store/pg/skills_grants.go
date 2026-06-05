@@ -91,7 +91,8 @@ func (s *PGSkillStore) RevokeFromAgent(ctx context.Context, skillID, agentID uui
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE skills SET visibility = 'private', updated_at = NOW()
 		 WHERE id = $1 AND visibility = 'internal' AND (is_system = true OR tenant_id = $2)
-		   AND NOT EXISTS (SELECT 1 FROM skill_agent_grants WHERE skill_id = $1)`,
+		   AND NOT EXISTS (SELECT 1 FROM skill_agent_grants WHERE skill_id = $1)
+		   AND NOT EXISTS (SELECT 1 FROM skill_user_grants WHERE skill_id = $1)`,
 		skillID, tid)
 	if err != nil {
 		slog.Warn("skill_grants: failed to auto-demote visibility", "skill_id", skillID, "error", err)
