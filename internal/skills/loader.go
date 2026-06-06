@@ -55,6 +55,10 @@ type Loader struct {
 	// Uses versioned subdirectory structure: <dir>/<slug>/<version>/SKILL.md
 	managedSkillsDir string
 
+	// Sandbox-accessible prefix for managed skills paths.
+	// BuildSummary replaces managedSkillsDir with this prefix for <location>.
+	managedSandboxPrefix string
+
 	mu    sync.RWMutex
 	cache map[string]*Info // name → info (lazily populated)
 
@@ -98,6 +102,13 @@ func NewLoader(workspace, globalSkills, builtinSkills string) *Loader {
 func (l *Loader) SetManagedDir(dir string) {
 	l.managedSkillsDir = dir
 	l.BumpVersion() // trigger re-scan
+}
+
+// SetManagedSandboxPrefix sets the sandbox-accessible path prefix for managed skills.
+// When set, BuildSummary replaces managedSkillsDir prefix with this value
+// so that agents in sandbox can read SKILL.md files via the workspace path.
+func (l *Loader) SetManagedSandboxPrefix(prefix string) {
+	l.managedSandboxPrefix = prefix
 }
 
 // ListSkills returns all available skills, respecting the priority hierarchy.
@@ -325,7 +336,7 @@ func (l *Loader) LoadSkill(_ context.Context, name string) (string, bool) {
 }
 
 // LoadForContext loads multiple skills and formats them for system prompt injection.
-// If allowList is nil, all skills are loaded. If non-nil, only listed skills are loaded.
+// If allowList is nil, all skills are loaded. If non-nil, only listed skills are included.
 func (l *Loader) LoadForContext(ctx context.Context, allowList []string) string {
 	var names []string
 
@@ -358,21 +369,15 @@ func (l *Loader) LoadForContext(ctx context.Context, allowList []string) string 
 	return "## Available Skills\n\n" + strings.Join(parts, "\n\n---\n\n")
 }
 
-// skillDescMaxLen is the max character length for skill descriptions
-// in the system prompt inline XML. ~200 chars ≈ ~50 tokens, balancing
-// discoverability with prompt budget. Full SKILL.md is read on actual use.
 const skillDescMaxLen = 200
 
 // BuildSummary returns an XML summary of skills for context injection.
-// If allowList is nil, all skills are included. If non-nil, only listed skills are included.
-// The format matches the TS <available_skills> XML used in system prompts.
 func (l *Loader) BuildSummary(ctx context.Context, allowList []string) string {
 	allSkills := l.ListSkills(ctx)
 	if len(allSkills) == 0 {
 		return ""
 	}
 
-	// Filter by allowList if provided
 	var filtered []Info
 	if allowList == nil {
 		filtered = allSkills
@@ -402,7 +407,11 @@ func (l *Loader) BuildSummary(ctx context.Context, allowList []string) string {
 			desc = string([]rune(desc)[:skillDescMaxLen]) + "…"
 		}
 		lines = append(lines, fmt.Sprintf("    <description>%s</description>", escapeXML(desc)))
-		lines = append(lines, fmt.Sprintf("    <location>%s</location>", escapeXML(s.Path)))
+		loc := s.Path
+		if l.managedSandboxPrefix != "" && s.Source == "managed" {
+			loc = strings.Replace(loc, l.managedSkillsDir, l.managedSandboxPrefix, 1)
+		}
+		lines = append(lines, fmt.Sprintf("    <location>%s</location>", escapeXML(loc)))
 		lines = append(lines, "  </skill>")
 	}
 	lines = append(lines, "</available_skills>")
@@ -410,9 +419,6 @@ func (l *Loader) BuildSummary(ctx context.Context, allowList []string) string {
 	return strings.Join(lines, "\n")
 }
 
-// BuildPinnedSummary generates XML summary for only the pinned skill names.
-// Delegates to BuildSummary with pinned names as allowlist.
-// Returns empty string if none match.
 func (l *Loader) BuildPinnedSummary(ctx context.Context, pinnedNames []string) string {
 	if len(pinnedNames) == 0 {
 		return ""
@@ -420,18 +426,14 @@ func (l *Loader) BuildPinnedSummary(ctx context.Context, pinnedNames []string) s
 	return l.BuildSummary(ctx, pinnedNames)
 }
 
-// Version returns the current skill snapshot version.
-// Consumers compare this to their cached version to detect changes.
 func (l *Loader) Version() int64 {
 	return l.version.Load()
 }
 
-// BumpVersion increments the version counter (called by watcher on changes).
 func (l *Loader) BumpVersion() {
 	l.version.Store(time.Now().UnixMilli())
 }
 
-// Dirs returns all non-empty skill directories (for the watcher to monitor).
 func (l *Loader) Dirs() []string {
 	var dirs []string
 	for _, d := range []string{l.workspaceSkills, l.projectAgentSkills, l.personalAgentSkills, l.globalSkills, l.builtinSkills, l.managedSkillsDir} {
@@ -442,8 +444,6 @@ func (l *Loader) Dirs() []string {
 	return dirs
 }
 
-// FilterSkills returns skills filtered by an allowlist.
-// If allowList is nil, all skills are returned. If empty slice, none are returned.
 func (l *Loader) FilterSkills(ctx context.Context, allowList []string) []Info {
 	all := l.ListSkills(ctx)
 	if allowList == nil {
@@ -465,39 +465,29 @@ func (l *Loader) FilterSkills(ctx context.Context, allowList []string) []Info {
 	return filtered
 }
 
-// GetSkill returns info about a specific skill.
-func (l *Loader) GetSkill(ctx context.Context, name string) (*Info, bool) {
-	// Ensure cache is populated
-	l.ListSkills(ctx)
-
+func (l *Loader) GetSkill(_ context.Context, name string) (*Info, bool) {
+	l.ListSkills(context.Background())
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	info, ok := l.cache[name]
 	return info, ok
 }
 
-// --- Frontmatter parsing ---
-
-var frontmatterRe = regexp.MustCompile(`(?s)^---\n(.*?)\n---\n?`)
+var frontmatterRe = regexp.MustCompile(` + "`" + `(?s)^---\n(.*?)\n---\n?` + "`" + `)
 
 func parseMetadata(path string) *Metadata {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-
 	fm := extractFrontmatter(string(data))
 	if fm == "" {
 		return &Metadata{Name: filepath.Base(filepath.Dir(path))}
 	}
-
-	// Try JSON first
 	var jm Metadata
 	if json.Unmarshal([]byte(fm), &jm) == nil && jm.Name != "" {
 		return &jm
 	}
-
-	// Fall back to simple YAML key: value
 	kv := parseSimpleYAML(fm)
 	return &Metadata{
 		Name:        kv["name"],
@@ -505,8 +495,6 @@ func parseMetadata(path string) *Metadata {
 	}
 }
 
-// normalizeLineEndings converts \r\n and bare \r to \n so frontmatter regex matches
-// files created on Windows or uploaded via ZIP with CRLF line endings.
 func normalizeLineEndings(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
@@ -525,27 +513,6 @@ func stripFrontmatter(content string) string {
 	return frontmatterRe.ReplaceAllString(normalizeLineEndings(content), "")
 }
 
-// parseSimpleYAMLLists parses YAML list fields into separate []string values keyed
-// by top-level key. Scalars and block scalars are ignored. Complements
-// parseSimpleYAML (which joins list items with spaces). Used by dep_manifest.go.
-//
-// Supported grammar (subset):
-//   - Flat list:           key:\n  - item1\n  - item2
-//   - Quoted items:        key:\n  - "value"
-//   - CRLF line endings are normalized
-//
-// Not supported — misuse is logged at debug level and the key is skipped:
-//   - Nested maps (key:\n  subkey:\n    - item) — values would lose prefix semantics
-//   - Flow-style lists (key: [a, b]) — silently returns empty
-//   - Dash without space (-item) — silently returns empty
-//
-// Example:
-//
-//	deps:
-//	  - pip:psycopg2-binary
-//	  - system:ffmpeg
-//
-// Returns: {"deps": ["pip:psycopg2-binary", "system:ffmpeg"]}
 func parseSimpleYAMLLists(content string) map[string][]string {
 	result := make(map[string][]string)
 	lines := strings.Split(normalizeLineEndings(content), "\n")
@@ -555,7 +522,6 @@ func parseSimpleYAMLLists(content string) map[string][]string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		// Indented line — could be a list item for currentKey.
 		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
 			if currentKey == "" {
 				continue
@@ -568,9 +534,6 @@ func parseSimpleYAMLLists(content string) map[string][]string {
 				}
 				continue
 			}
-			// Indented non-list line under a tracked key — e.g. nested map:
-			//   deps:\n  pip:\n    - requests
-			// Silent flatten would drop the "pip:" prefix and miscategorize. Skip + clear key.
 			if strings.Contains(trimmed, ":") {
 				slog.Debug("skills: parseSimpleYAMLLists skipped nested map",
 					"key", currentKey, "nested", trimmed)
@@ -579,7 +542,6 @@ func parseSimpleYAMLLists(content string) map[string][]string {
 			}
 			continue
 		}
-		// Top-level key — reset list tracking.
 		idx := strings.IndexByte(trimmed, ':')
 		if idx < 0 {
 			currentKey = ""
@@ -596,12 +558,9 @@ func parseSimpleYAMLLists(content string) map[string][]string {
 	return result
 }
 
-// parseSimpleYAML parses a subset of YAML: simple key: value pairs,
-// multiline block scalars (| and >), and list values (- item).
 func parseSimpleYAML(content string) map[string]string {
 	result := make(map[string]string)
 	lines := strings.Split(content, "\n")
-
 	var currentKey string
 	var blockLines []string
 	var inBlock bool
@@ -611,7 +570,6 @@ func parseSimpleYAML(content string) map[string]string {
 			if len(blockLines) > 0 {
 				result[currentKey] = strings.Join(blockLines, " ")
 			} else {
-				// Empty value (e.g. "slug:" with no indented continuation).
 				result[currentKey] = ""
 			}
 		}
@@ -621,13 +579,11 @@ func parseSimpleYAML(content string) map[string]string {
 	}
 
 	for _, line := range lines {
-		// Indented continuation line (block scalar or list item)
 		if inBlock && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
 			trimmed := strings.TrimSpace(line)
 			if trimmed == "" {
 				continue
 			}
-			// List item: "  - value"
 			if strings.HasPrefix(trimmed, "- ") {
 				blockLines = append(blockLines, strings.TrimSpace(trimmed[2:]))
 			} else if trimmed != "-" {
@@ -636,7 +592,6 @@ func parseSimpleYAML(content string) map[string]string {
 			continue
 		}
 
-		// Not indented — flush any pending block and parse as top-level key
 		flushBlock()
 
 		trimmed := strings.TrimSpace(line)
@@ -652,13 +607,11 @@ func parseSimpleYAML(content string) map[string]string {
 		val = strings.Trim(val, "\"'")
 
 		if val == "|" || val == ">" || val == "|-" || val == ">-" {
-			// Start of a multiline block — collect subsequent indented lines
 			currentKey = key
 			inBlock = true
 			continue
 		}
 		if val == "" {
-			// Could be start of a list block (e.g. "allowed-tools:\n  - Bash")
 			currentKey = key
 			inBlock = true
 			continue
