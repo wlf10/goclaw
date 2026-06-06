@@ -55,6 +55,10 @@ type Loader struct {
 	// Uses versioned subdirectory structure: <dir>/<slug>/<version>/SKILL.md
 	managedSkillsDir string
 
+	// Sandbox-accessible prefix for managed skills paths.
+	// BuildSummary replaces managedSkillsDir with this prefix for <location>.
+	managedSandboxPrefix string
+
 	mu    sync.RWMutex
 	cache map[string]*Info // name → info (lazily populated)
 
@@ -98,6 +102,13 @@ func NewLoader(workspace, globalSkills, builtinSkills string) *Loader {
 func (l *Loader) SetManagedDir(dir string) {
 	l.managedSkillsDir = dir
 	l.BumpVersion() // trigger re-scan
+}
+
+// SetManagedSandboxPrefix sets the sandbox-accessible path prefix for managed skills.
+// When set, BuildSummary replaces managedSkillsDir prefix with this value
+// so that agents in sandbox can read SKILL.md files via the workspace path.
+func (l *Loader) SetManagedSandboxPrefix(prefix string) {
+	l.managedSandboxPrefix = prefix
 }
 
 // ListSkills returns all available skills, respecting the priority hierarchy.
@@ -402,7 +413,11 @@ func (l *Loader) BuildSummary(ctx context.Context, allowList []string) string {
 			desc = string([]rune(desc)[:skillDescMaxLen]) + "…"
 		}
 		lines = append(lines, fmt.Sprintf("    <description>%s</description>", escapeXML(desc)))
-		lines = append(lines, fmt.Sprintf("    <location>%s</location>", escapeXML(s.Path)))
+		loc := s.Path
+		if l.managedSandboxPrefix != "" && s.Source == "managed" {
+			loc = strings.Replace(loc, l.managedSkillsDir, l.managedSandboxPrefix, 1)
+		}
+		lines = append(lines, fmt.Sprintf("    <location>%s</location>", escapeXML(loc)))
 		lines = append(lines, "  </skill>")
 	}
 	lines = append(lines, "</available_skills>")

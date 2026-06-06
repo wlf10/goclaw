@@ -529,6 +529,7 @@ func setupSkillsSystem(
 		storeDirs := pgStores.Skills.Dirs()
 		if len(storeDirs) > 0 {
 			skillsLoader.SetManagedDir(storeDirs[0])
+			skillsLoader.SetManagedSandboxPrefix("skills-store")
 			slog.Info("skills-store directory wired into loader", "dir", storeDirs[0])
 
 			// Seed system/bundled skills into DB
