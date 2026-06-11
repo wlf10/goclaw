@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"strings"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -150,18 +151,29 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.logger.Info("Chrome launched", "cdp", controlURL, "headless", m.headless, "pid", l.PID())
 	}
 
+	b := rod.New().Context(context.Background()).ControlURL(controlURL)
+
 	connectCtx, connectCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer connectCancel()
 
-	b := rod.New().Context(connectCtx).ControlURL(controlURL)
-	if err := b.Connect(); err != nil {
+	connectCh := make(chan error, 1)
+	go func() {
+		connectCh <- b.Connect()
+	}()
+	var connectErr error
+	select {
+	case connectErr = <-connectCh:
+	case <-connectCtx.Done():
+		connectErr = connectCtx.Err()
+	}
+	if connectErr != nil {
 		// If local launch succeeded but connect failed, kill the orphan process
 		if m.launcher != nil {
 			m.launcher.Kill()
 			m.launcher.Cleanup()
 			m.launcher = nil
 		}
-		return fmt.Errorf("connect to Chrome: %w", err)
+		return fmt.Errorf("connect to Chrome: %w", connectErr)
 	}
 
 	m.browser = b
@@ -256,7 +268,7 @@ func (m *Manager) tenantBrowserLocked(tenantID string) (*rod.Browser, error) {
 		return nil, fmt.Errorf("browser not running")
 	}
 	// Master tenant or no tenant: use main browser
-	if tenantID == "" || tenantID == MasterTenantID {
+	if tenantID == "" || strings.HasPrefix(tenantID, MasterTenantID) {
 		return m.browser, nil
 	}
 	// Return existing incognito context
