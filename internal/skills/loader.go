@@ -82,7 +82,7 @@ func NewLoader(workspace, globalSkills, builtinSkills string) *Loader {
 	// Personal agent skills: ~/.agents/skills/ (matching TS)
 	homeDir, _ := os.UserHomeDir()
 	personalAgentSkills := ""
-	if homeDir != "" {
+	if homeDir != "" && os.Getenv("GOCLAW_DISABLE_PERSONAL_SKILLS") != "1" {
 		personalAgentSkills = filepath.Join(homeDir, ".agents", "skills")
 	}
 

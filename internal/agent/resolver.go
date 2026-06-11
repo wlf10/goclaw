@@ -14,9 +14,9 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
 	"github.com/nextlevelbuilder/goclaw/internal/hooks"
-	"github.com/nextlevelbuilder/goclaw/internal/memory"
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
+	"github.com/nextlevelbuilder/goclaw/internal/memory"
 	"github.com/nextlevelbuilder/goclaw/internal/providerresolve"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/sandbox"
@@ -24,6 +24,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/tracing"
+	usagecaps "github.com/nextlevelbuilder/goclaw/internal/usage/caps"
 )
 
 // ResolverDeps holds shared dependencies for the agent resolver.
@@ -83,7 +84,8 @@ type ResolverDeps struct {
 	MCPGrantChecker mcpbridge.GrantChecker
 
 	// Skill access store — for per-agent skill visibility filtering
-	SkillAccessStore store.SkillAccessStore
+	SkillAccessStore   store.SkillAccessStore
+	SkillSlashCommands config.SkillSlashCommandConfig
 
 	// Config permission store for group file writer checks
 	ConfigPermStore store.ConfigPermissionStore
@@ -96,6 +98,7 @@ type ResolverDeps struct {
 
 	// Tracing store for budget enforcement queries
 	TracingStore store.TracingStore
+	UsageCaps    *usagecaps.Service
 
 	// Memory store for extractive memory fallback
 	MemoryStore store.MemoryStore
@@ -157,7 +160,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 		}
 
 		// Resolve provider (tenant-aware: tries tenant-specific first, falls back to master)
-		provider, err := providerresolve.ResolveConfiguredProvider(deps.ProviderReg, ag)
+		provider, err := providerresolve.ResolveAgentProvider(deps.ProviderReg, ag)
 		if err != nil {
 			// Fallback to any available provider for this tenant
 			names := deps.ProviderReg.ListForTenant(ag.TenantID)
@@ -252,37 +255,33 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 		sandboxContainerDir := deps.SandboxContainerDir
 		sandboxWorkspaceAccess := deps.SandboxWorkspaceAccess
 		var sandboxCfgOverride *sandbox.Config
-		if c := ag.ParseSandboxConfig(); c != nil {
-			resolved := c.ToSandboxConfig()
-			sandboxContainerDir = resolved.ContainerWorkdir()
-			sandboxWorkspaceAccess = string(resolved.WorkspaceAccess)
-			sandboxCfgOverride = &resolved
-		}
-
 		// Resolve tenant slug once for workspace + dataDir scoping.
 		var tenantSlug string
 		if ag.TenantID != store.MasterTenantID && ag.TenantID != uuid.Nil {
 			tenantSlug = resolveTenantSlug(deps.TenantStore, ag.TenantID)
 		}
+		if sandboxCfg := ag.ParseSandboxConfig(); sandboxCfg != nil {
+			resolved := sandboxCfg.ToSandboxConfig()
+			resolved.SkillsStoreDir = config.TenantSkillsStoreDir(
+				deps.DataDir, ag.TenantID, tenantSlug,
+			)
+			sandboxContainerDir = resolved.ContainerWorkdir()
+			sandboxWorkspaceAccess = string(resolved.WorkspaceAccess)
+			sandboxCfgOverride = &resolved
+		}
 
-		// Expand ~ in workspace path and ensure directory exists.
-		// When ag.Workspace is set (DB), use it directly — it's the correct path.
-		// When empty, use deps.Workspace (raw root). The resolver (resolver_impl.go)
-		// will compute tenant+agent+user path via tenantPath() — no need to
-		// pre-apply config.TenantWorkspace here (avoids double tenants/{slug}).
-		workspace := ag.Workspace
-		if workspace != "" {
-			workspace = config.ExpandHome(workspace)
-			if !filepath.IsAbs(workspace) {
-				workspace, _ = filepath.Abs(workspace)
+		// Compute workspace root for the resolver.
+		// The resolver (resolver_impl.go) builds the full path from BaseDir
+		// via tenantPath() + agentID + userID. BaseDir must be the raw root,
+		// NOT the pre-resolved DB path — otherwise tenantPath() duplicates
+		// tenants/{slug}. ag.Workspace from DB is already the full path and
+		// is kept only for backward compat / mkdir.
+		workspace := deps.Workspace
+		if workspace == "" {
+			workspace = ag.Workspace
+			if workspace != "" {
+				workspace = config.ExpandHome(workspace)
 			}
-		}
-		// Fallback to global workspace if per-agent workspace is empty
-		if workspace == "" && deps.Workspace != "" {
-			workspace = deps.Workspace
-		}
-		if workspace == "" && deps.Workspace != "" {
-			workspace = deps.Workspace
 		}
 		if workspace != "" {
 			if err := os.MkdirAll(workspace, 0755); err != nil {
@@ -467,7 +466,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			AgentOtherConfig:       ag.OtherConfig,
 			AgentType:              ag.AgentType,
 			IsTeamLead:             isTeamLead,
-			AutoInjector:          deps.AutoInjector,
+			AutoInjector:           deps.AutoInjector,
 			Provider:               provider,
 			Model:                  ag.Model,
 			ModelRegistry:          deps.ModelRegistry,
@@ -489,6 +488,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			AgentToolPolicy:        agentToolPolicyForTeam(agentToolPolicyWithWorkspace(agentToolPolicyWithMCP(ag.ParseToolsConfig(), hasMCPTools), hasTeam), isTeamLead),
 			SkillsLoader:           deps.Skills,
 			SkillAllowList:         skillAllowList,
+			SkillSlashCommands:     deps.SkillSlashCommands,
 			HasMemory:              hasMemory,
 			ContextFiles:           contextFiles,
 			EnsureUserProfile:      deps.EnsureUserProfile,
@@ -509,6 +509,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			BuiltinToolSettings:    builtinSettings,
 			TenantToolSettings:     tenantToolSettings,
 			TenantAllowedPaths:     tenantAllowedPaths,
+			SystemConfigs:          deps.SystemConfigs,
 			DisabledTools:          disabledTools,
 			ReasoningConfig:        store.ResolveEffectiveReasoningConfig(providerReasoningDefaults, ag.ParseReasoningConfig()),
 			PromptMode:             PromptMode(ag.ParsePromptMode()),
@@ -528,6 +529,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			ModelPricing:           deps.ModelPricing,
 			BudgetMonthlyCents:     derefInt(ag.BudgetMonthlyCents),
 			TracingStore:           deps.TracingStore,
+			UsageCaps:              deps.UsageCaps,
 			MemoryStore:            deps.MemoryStore,
 			MCPStore:               deps.MCPStore,
 			MCPPool:                deps.MCPPool,
