@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,15 +167,26 @@ func (m *Manager) Start(ctx context.Context) error {
 	connectCtx, connectCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer connectCancel()
 
-	b := rod.New().Context(connectCtx).ControlURL(controlURL)
-	if err := b.Connect(); err != nil {
+	b := rod.New().Context(context.Background()).ControlURL(controlURL)
+
+	connectCh := make(chan error, 1)
+	go func() {
+		connectCh <- b.Connect()
+	}()
+	var connectErr error
+	select {
+	case connectErr = <-connectCh:
+	case <-connectCtx.Done():
+		connectErr = connectCtx.Err()
+	}
+	if connectErr != nil {
 		// If local launch succeeded but connect failed, kill the orphan process
 		if m.launcher != nil {
 			m.launcher.Kill()
 			m.launcher.Cleanup()
 			m.launcher = nil
 		}
-		return fmt.Errorf("connect to Chrome: %w", err)
+		return fmt.Errorf("connect to Chrome: %w", connectErr)
 	}
 
 	m.browser = b
@@ -268,7 +280,8 @@ func (m *Manager) tenantBrowserLocked(scopeKey string) (*rod.Browser, error) {
 	if m.browser == nil {
 		return nil, fmt.Errorf("browser not running")
 	}
-	if scopeKey == "" || scopeKey == MasterTenantID {
+	// Master tenant or no tenant: use main browser
+	if scopeKey == "" || strings.HasPrefix(scopeKey, MasterTenantID) {
 		return m.browser, nil
 	}
 	// Return existing incognito context
