@@ -56,20 +56,15 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 			"role": role,
 		}
 
-		// Echo reasoning_content only for APIs/models that accept it on assistant history.
-		// Together Qwen and many OpenAI-compat gateways reject unknown message fields → HTTP 400.
-		//
-		// Kimi Coding is stricter: when its server-side thinking is on (always-on for
-		// kimi-k2-turbo-preview), assistant tool-call messages MUST carry
-		// reasoning_content even if empty — otherwise upstream returns 400 "thinking
-		// is enabled but reasoning_content is missing in assistant tool call message".
+		// Echo reasoning_content for APIs/models that require it on every assistant
+		// message. DeepSeek thinking mode returns HTTP 400 if any assistant message
+		// lacks the field after a tool call, even when empty. Together/Qwen gateways
+		// reject unknown fields; the allowlist in openAIWireAssistantReasoningContent
+		// ensures we only emit for compatible APIs.
 		if m.Role == "assistant" && openAIWireAssistantReasoningContent(model) {
-			switch {
-			case m.Thinking != "":
+			if m.Thinking != "" {
 				msg["reasoning_content"] = m.Thinking
-			case p.providerType == "kimi_coding":
-				// Send empty string rather than omit the field — satisfies Kimi's
-				// "must be present" check without inventing reasoning content.
+			} else {
 				msg["reasoning_content"] = ""
 			}
 		}
