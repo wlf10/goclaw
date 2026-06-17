@@ -35,7 +35,7 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		event.UserID = req.UserID
 		event.Channel = req.Channel
 		event.ChatID = req.ChatID
-		event.SessionKey = req.SessionKey
+		event.ChannelType = req.ChannelType
 		event.TenantID = l.tenantID
 		l.emit(event)
 	}
@@ -481,9 +481,12 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 			})
 		}
 
-		// Non-streaming: emit content events matching v2 behavior (channels need these).
+		// Non-streaming: emit content events. Strip thinking events when
+		// OptStripThinking is set (leaker models like DeepSeek-Reasoner).
+		// resp.Thinking is always preserved internally for API echoing.
 		if !req.Stream && err == nil && resp != nil {
-			if resp.Thinking != "" {
+			stripUserThinking, _ := chatReq.Options[providers.OptStripThinking].(bool)
+			if resp.Thinking != "" && !stripUserThinking {
 				emitRun(AgentEvent{
 					Type:    protocol.ChatEventThinking,
 					AgentID: l.id,
@@ -503,170 +506,4 @@ func (l *Loop) makeCallLLM(req *RunRequest, emitRun func(AgentEvent)) func(ctx c
 		l.emitLLMSpanEnd(ctx, spanID, start, resp, err, opts...)
 		return resp, err
 	}
-}
-
-func shouldRetryTaskMCP(chatReq providers.ChatRequest) bool {
-	hasTaskMCPTool := false
-	for _, td := range chatReq.Tools {
-		name := strings.TrimSpace(td.Function.Name)
-		if strings.HasPrefix(name, "mcp_bx24__") && (strings.Contains(name, "search") || strings.Contains(name, "execute")) {
-			hasTaskMCPTool = true
-			break
-		}
-	}
-	if !hasTaskMCPTool {
-		return false
-	}
-	lastUser := ""
-	for i := len(chatReq.Messages) - 1; i >= 0; i-- {
-		if chatReq.Messages[i].Role == "user" {
-			lastUser = strings.ToLower(strings.TrimSpace(chatReq.Messages[i].Content))
-			break
-		}
-	}
-	if lastUser == "" {
-		return false
-	}
-	return strings.Contains(lastUser, "task") || strings.Contains(lastUser, "việc") || strings.Contains(lastUser, "công việc")
-}
-
-func (l *Loop) makePruneMessages() func(msgs []providers.Message, budget int) ([]providers.Message, pipeline.PruneStats) {
-	return func(msgs []providers.Message, budget int) ([]providers.Message, pipeline.PruneStats) {
-		var stats pipeline.PruneStats
-		pruned := pruneContextMessages(msgs, budget, l.contextPruningCfg, l.tokenCounter, l.model, &stats)
-		return pruned, stats
-	}
-}
-
-func (l *Loop) makeCompactMessages(req *RunRequest) func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error) {
-	return func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error) {
-		compacted := l.compactMessagesInPlace(ctx, msgs)
-		if compacted == nil {
-			return msgs, nil // compaction failed, return original
-		}
-		// Stamp session metadata with the compaction timestamp so operators
-		// can diagnose compaction cadence without a dedicated column. Stored
-		// as RFC3339 string in sessions.metadata JSONB (flushed on next save).
-		if l.sessions != nil && req != nil && req.SessionKey != "" {
-			l.sessions.SetSessionMetadata(ctx, req.SessionKey, map[string]string{
-				SessionMetaKeyLastCompactionAt: time.Now().UTC().Format(time.RFC3339),
-			})
-		}
-		return compacted, nil
-	}
-}
-
-// SessionMetaKeyLastCompactionAt is the sessions.metadata JSONB key used to
-// record the RFC3339 timestamp of the most recent compaction. Exported so
-// the web UI code path can read it back via GetSessionMetadata without
-// duplicating the string.
-const SessionMetaKeyLastCompactionAt = "last_compaction_at"
-
-// cacheTouchAt returns the last prune-mutation timestamp for a session.
-// Returns zero time if no touch recorded yet.
-func (l *Loop) cacheTouchAt(sessionKey string) time.Time {
-	if v, ok := l.cacheTouchBySession.Load(sessionKey); ok {
-		return v.(time.Time)
-	}
-	return time.Time{}
-}
-
-// markCacheTouched records the current time as the last prune-mutation timestamp
-// for the given session. Called only after pruning actually mutates messages.
-func (l *Loop) markCacheTouched(sessionKey string) {
-	l.cacheTouchBySession.Store(sessionKey, time.Now())
-}
-
-func (l *Loop) makeRunMemoryFlush() func(ctx context.Context, state *pipeline.RunState) error {
-	return func(ctx context.Context, state *pipeline.RunState) error {
-		settings := ResolveMemoryFlushSettings(l.compactionCfg)
-		if settings == nil {
-			return nil
-		}
-		l.runMemoryFlush(ctx, state.Input.SessionKey, settings)
-		return nil
-	}
-}
-
-func (l *Loop) makeFlushMessages(req *RunRequest) func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
-	// Track whether user message has been persisted (first flush only).
-	// v2 adds user message to pendingMsgs explicitly; v3 keeps it in history
-	// (via BuildMessages) so it never reaches FlushPending. This closure
-	// persists the user message on first flush to match v2 session format.
-	var userMsgFlushed bool
-	return func(ctx context.Context, sessionKey string, msgs []providers.Message) error {
-		if !userMsgFlushed && !req.HideInput && req.Message != "" {
-			userMsgFlushed = true
-			l.sessions.AddMessage(ctx, sessionKey, providers.Message{
-				Role:    "user",
-				Content: req.Message,
-			})
-		}
-		for _, msg := range msgs {
-			l.sessions.AddMessage(ctx, sessionKey, msg)
-		}
-		return nil
-	}
-}
-
-func (l *Loop) makeUpdateMetadata(req *RunRequest) func(ctx context.Context, sessionKey string, usage providers.Usage) error {
-	return func(ctx context.Context, sessionKey string, usage providers.Usage) error {
-		l.sessions.UpdateMetadata(ctx, sessionKey, l.model, l.provider.Name(), req.Channel)
-		l.sessions.AccumulateTokens(ctx, sessionKey, int64(usage.PromptTokens), int64(usage.CompletionTokens))
-		// Persist session to DB (matching v2 finalizeRun behavior).
-		// FlushMessages already ran, so all pending messages are in the cache.
-		l.sessions.Save(ctx, sessionKey)
-		return nil
-	}
-}
-
-func (l *Loop) makeSkillPostscript() func(ctx context.Context, content string, totalToolCalls int) string {
-	if !l.skillEvolve || l.skillNudgeInterval <= 0 {
-		return nil // disabled — FinalizeStage skips
-	}
-	var sent bool
-	return func(ctx context.Context, content string, totalToolCalls int) string {
-		if sent || totalToolCalls < l.skillNudgeInterval || IsSilentReply(content) {
-			return content
-		}
-		sent = true
-		locale := store.LocaleFromContext(ctx)
-		return content + "\n\n---\n_" + i18n.T(locale, i18n.MsgSkillNudgePostscript) + "_"
-	}
-}
-
-func (l *Loop) makeBootstrapCleanup() func(ctx context.Context, state *pipeline.RunState) error {
-	return func(ctx context.Context, state *pipeline.RunState) error {
-		if l.bootstrapCleanup == nil {
-			return nil
-		}
-		return l.bootstrapCleanup(ctx, l.agentUUID, state.Input.UserID)
-	}
-}
-
-func (l *Loop) reserveLLMUsage(ctx context.Context, req *RunRequest, state *pipeline.RunState, chatReq providers.ChatRequest, attempt string) (*usagecaps.Reservation, error) {
-	if l.usageCaps == nil || state.Provider == nil {
-		return nil, nil
-	}
-	return l.reserveLLMUsageFor(ctx, req, state.Iteration, chatReq, attempt, state.Provider.Name(), state.Model)
-}
-
-func (l *Loop) reserveLLMUsageFor(ctx context.Context, req *RunRequest, iteration int, chatReq providers.ChatRequest, attempt, providerName, model string) (*usagecaps.Reservation, error) {
-	if l.usageCaps == nil {
-		return nil, nil
-	}
-	tenantID := store.TenantIDFromContext(ctx)
-	if tenantID == uuid.Nil {
-		tenantID = l.tenantID
-	}
-	key := fmt.Sprintf("%s:%s:%d:%s", req.RunID, l.agentUUID.String(), iteration+1, attempt)
-	return l.usageCaps.Preflight(ctx, usagecaps.Request{
-		TenantID:        tenantID,
-		AgentID:         l.agentUUID,
-		ProviderName:    providerName,
-		ModelID:         model,
-		ReservationKey:  key,
-		Messages:        chatReq.Messages,
-		MaxOutputTokens: l.maxOutputTokensFromRequest(chatReq),
-	})
 }
