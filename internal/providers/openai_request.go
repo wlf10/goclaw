@@ -67,7 +67,7 @@ func (p *OpenAIProvider) buildRequestBody(model string, req ChatRequest, stream 
 			switch {
 			case m.Thinking != "":
 				msg["reasoning_content"] = m.Thinking
-			case p.providerType == "kimi_coding":
+			case p.providerType == "kimi_coding" || p.providerType == "deepseek":
 				// Send empty string rather than omit the field — satisfies Kimi's
 				// "must be present" check without inventing reasoning content.
 				msg["reasoning_content"] = ""
