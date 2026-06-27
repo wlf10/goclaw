@@ -102,6 +102,26 @@ func newDockerSandbox(ctx context.Context, name string, cfg Config, workspace st
 	}
 	args = append(args, "-w", containerWorkdir)
 
+	// Mount managed skills-store for read_file access
+	if cfg.SkillsStoreDir != "" {
+		hostSkillsPath := resolveHostWorkspacePath(ctx, cfg.SkillsStoreDir)
+		if hostSkillsPath != cfg.SkillsStoreDir {
+			skillsContainerPath := filepath.Join(containerWorkdir, ".managed-skills")
+			args = append(args, "-v",
+				fmt.Sprintf("%s:%s:ro", hostSkillsPath, skillsContainerPath))
+		}
+	}
+
+	// Mount teams directory for vault access (read-write for daily notes etc.)
+	if cfg.TeamsDir != "" {
+		hostTeamsPath := resolveHostWorkspacePath(ctx, cfg.TeamsDir)
+		if hostTeamsPath != cfg.TeamsDir {
+			teamsContainerPath := filepath.Join(containerWorkdir, "teams")
+			args = append(args, "-v",
+				fmt.Sprintf("%s:%s:rw", hostTeamsPath, teamsContainerPath))
+		}
+	}
+
 	// Environment variables
 	for k, v := range cfg.Env {
 		args = append(args, "-e", k+"="+v)
