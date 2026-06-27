@@ -75,6 +75,8 @@ type Config struct {
 	SetupCommand    string   `json:"setup_command,omitempty"`
 	ContainerPrefix string   `json:"container_prefix,omitempty"`
 	Workdir         string   `json:"workdir,omitempty"` // container workdir (default "/workspace")
+	SkillsStoreDir  string   `json:"skills_store_dir,omitempty"`
+	TeamsDir        string   `json:"teams_dir,omitempty"`        // teams workspace directory (mounted as /workspace/teams)
 
 	// Pruning (matching TS SandboxPruneSettings)
 	IdleHours        int `json:"idle_hours,omitempty"`         // prune containers idle > N hours (default 24)
@@ -199,9 +201,9 @@ type Manager interface {
 	// Get returns (or creates) a sandbox for the given scope key, workspace mount,
 	// and effective config. Implementations must not reuse one container across
 	// different mounted workspaces or workspace access settings.
-	// For session scope: key = sessionKey
+	// For session scope: [REDACTED]
 	// For agent scope: key = agentID
-	// For shared scope: key = "shared"
+	// For shared scope: [REDACTED]
 	// If cfgOverride is non-nil, it is used instead of the global config for new containers.
 	Get(ctx context.Context, key string, workspace string, cfgOverride *Config) (Sandbox, error)
 
