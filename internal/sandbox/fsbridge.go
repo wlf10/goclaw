@@ -158,6 +158,23 @@ func (b *FsBridge) resolvePath(path string) string {
 	} else {
 		cleaned = filepath.Clean(filepath.Join(workdir, path))
 	}
+
+	// Rewrite managed skills paths to sandbox .managed-skills
+	managedPrefixes := []string{
+		"/root/.goclaw/data/skills-store/",
+		"/root/.goclaw/data/tenants/home/skills-store/",
+	}
+	for _, prefix := range managedPrefixes {
+		if strings.HasPrefix(cleaned, prefix) {
+			return filepath.Join(workdir, ".managed-skills", strings.TrimPrefix(cleaned, prefix))
+		}
+	}
+
+	// Rewrite teams host paths to sandbox /workspace/teams/
+	if strings.HasPrefix(cleaned, "/opt/goclaw-workspace/teams/") {
+		return filepath.Join(workdir, "teams", strings.TrimPrefix(cleaned, "/opt/goclaw-workspace/teams/"))
+	}
+
 	if cleaned == workdir || strings.HasPrefix(cleaned, workdir+"/") {
 		return cleaned
 	}
